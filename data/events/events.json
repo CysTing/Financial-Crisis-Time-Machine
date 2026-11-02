@@ -1,0 +1,148 @@
+[
+  {
+    "event_date": "2007-08-17",
+    "publication_date": "2007-08-17",
+    "headline": "Fed eases discount-window terms",
+    "explanation": "The Federal Reserve reduced its primary credit rate by 50 basis points and extended available term financing to address financial-market liquidity strains.",
+    "source": "Federal Reserve Board, August 17, 2007 press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20070817a.htm"
+  },
+  {
+    "event_date": "2008-03-16",
+    "publication_date": "2008-03-16",
+    "headline": "Bear Stearns financing approved; dealer facility announced",
+    "explanation": "The Fed approved the financing arrangement announced by JPMorgan Chase and Bear Stearns and authorized a new facility lending to primary dealers.",
+    "source": "Federal Reserve Board, March 16, 2008 press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20080316a.htm"
+  },
+  {
+    "event_date": "2008-09-15",
+    "publication_date": "2008-09-15",
+    "headline": "Lehman Brothers holding company files for bankruptcy",
+    "explanation": "Lehman Brothers Holdings sought bankruptcy protection. The SEC stated that its US broker-dealer was outside the holding company's filing and described customer-protection measures.",
+    "source": "US Securities and Exchange Commission, September 15, 2008 statement",
+    "source_url": "https://www.sec.gov/newsroom/press-releases/2008-198-statement-regarding-recent-market-events-lehman-brothers-updated"
+  },
+  {
+    "event_date": "2008-09-16",
+    "publication_date": "2008-09-16",
+    "published_at": "2008-09-16T21:00:00-04:00",
+    "headline": "Fed authorizes up to $85 billion of credit for AIG",
+    "explanation": "The Federal Reserve authorized a secured credit facility for AIG, citing the risks that a disorderly failure would pose to financial markets and the economy.",
+    "source": "Federal Reserve Board, September 16, 2008, 9:00 p.m. EDT press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/other20080916a.htm"
+  },
+  {
+    "event_date": "2008-10-08",
+    "publication_date": "2008-10-08",
+    "headline": "Central banks coordinate policy-rate reductions",
+    "explanation": "The Federal Reserve and several other central banks announced coordinated rate reductions in response to financial-market turmoil and weakening economic conditions.",
+    "source": "Federal Reserve Board, October 8, 2008 joint announcement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20081008a.htm"
+  },
+  {
+    "event_date": "2008-11-25",
+    "publication_date": "2008-11-25",
+    "published_at": "2008-11-25T08:15:00-05:00",
+    "headline": "Fed announces agency-debt and mortgage purchases",
+    "explanation": "The Fed announced plans to buy up to $100 billion of housing-agency debt and up to $500 billion of agency mortgage-backed securities to support credit availability.",
+    "source": "Federal Reserve Board, November 25, 2008, 8:15 a.m. EST press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20081125b.htm"
+  },
+  {
+    "event_date": "2008-12-16",
+    "publication_date": "2008-12-16",
+    "headline": "Federal funds target range moves to 0–0.25%",
+    "explanation": "The FOMC established a federal funds target range of 0 to 0.25 percent and said it would use available tools to support economic activity.",
+    "source": "Federal Reserve Board, December 16, 2008 FOMC statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20081216b.htm"
+  },
+  {
+    "event_date": "2009-03-18",
+    "publication_date": "2009-03-18",
+    "headline": "Fed expands asset-purchase support",
+    "explanation": "The FOMC announced additional agency mortgage and debt purchases, plus up to $300 billion of longer-term Treasury purchases, while retaining its 0–0.25 percent policy-rate range.",
+    "source": "Federal Reserve Board, March 18, 2009 FOMC statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20090318a.htm"
+  },
+  {
+    "event_date": "2020-03-03",
+    "publication_date": "2020-03-03",
+    "published_at": "2020-03-03T10:00:00-05:00",
+    "headline": "Fed announces emergency half-point rate cut",
+    "explanation": "Citing evolving coronavirus risks, the FOMC lowered its federal funds target range by 0.5 percentage point to 1–1.25 percent.",
+    "source": "Federal Reserve Board, March 3, 2020, 10:00 a.m. EST press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200303a.htm"
+  },
+  {
+    "event_date": "2020-03-11",
+    "publication_date": "2020-03-11",
+    "headline": "WHO characterizes COVID-19 as a pandemic",
+    "explanation": "The World Health Organization stated that COVID-19 could be characterized as a pandemic and called for urgent public-health action.",
+    "source": "World Health Organization, March 11, 2020 media briefing",
+    "source_url": "https://www.who.int/news-room/speeches/item/who-director-general-s-opening-remarks-at-the-media-briefing-on-covid-19---11-march-2020"
+  },
+  {
+    "event_date": "2020-03-15",
+    "publication_date": "2020-03-15",
+    "published_at": "2020-03-15T17:00:00-04:00",
+    "headline": "Fed cuts rates to near zero and announces purchases",
+    "explanation": "The FOMC lowered its target range to 0–0.25 percent and announced increases in Treasury and agency mortgage-backed securities holdings.",
+    "source": "Federal Reserve Board, March 15, 2020, 5:00 p.m. EDT press release",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm"
+  },
+  {
+    "event_date": "2020-03-23",
+    "publication_date": "2020-03-23",
+    "published_at": "2020-03-23T08:00:00-04:00",
+    "headline": "Fed commits to purchases needed for market functioning",
+    "explanation": "The FOMC said it would buy Treasury and agency mortgage-backed securities in the amounts needed to support market functioning and monetary-policy transmission.",
+    "source": "Federal Reserve Board, March 23, 2020, 8:00 a.m. EDT statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200323a.htm"
+  },
+  {
+    "event_date": "2021-12-15",
+    "publication_date": "2021-12-15",
+    "published_at": "2021-12-15T14:00:00-05:00",
+    "headline": "Fed accelerates tapering of asset purchases",
+    "explanation": "The FOMC announced a faster reduction in monthly net asset purchases in light of inflation developments and improvement in the labor market.",
+    "source": "Federal Reserve Board, December 15, 2021, 2:00 p.m. EST statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20211215a.htm"
+  },
+  {
+    "event_date": "2022-03-16",
+    "publication_date": "2022-03-16",
+    "published_at": "2022-03-16T14:00:00-04:00",
+    "headline": "Fed begins rate increases",
+    "explanation": "The FOMC raised its target range to 0.25–0.5 percent, citing elevated inflation, and anticipated further increases.",
+    "source": "Federal Reserve Board, March 16, 2022, 2:00 p.m. EDT statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220316a.htm"
+  },
+  {
+    "event_date": "2022-06-15",
+    "publication_date": "2022-06-15",
+    "published_at": "2022-06-15T14:00:00-04:00",
+    "headline": "Fed raises target range by 75 basis points",
+    "explanation": "The FOMC raised its federal funds target range to 1.5–1.75 percent and continued reducing its securities holdings as inflation remained elevated.",
+    "source": "Federal Reserve Board, June 15, 2022, 2:00 p.m. EDT statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220615a.htm"
+  },
+  {
+    "event_date": "2022-09-21",
+    "publication_date": "2022-09-21",
+    "published_at": "2022-09-21T14:00:00-04:00",
+    "headline": "Federal funds target range reaches 3–3.25%",
+    "explanation": "The FOMC raised its target range by another 75 basis points and reiterated its commitment to bringing inflation back toward 2 percent.",
+    "source": "Federal Reserve Board, September 21, 2022, 2:00 p.m. EDT statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220921a.htm"
+  },
+  {
+    "event_date": "2023-05-03",
+    "publication_date": "2023-05-03",
+    "published_at": "2023-05-03T14:00:00-04:00",
+    "headline": "Fed raises target range to 5–5.25%",
+    "explanation": "The FOMC raised its target range by 25 basis points, noted tighter credit conditions, and said future decisions would assess incoming information and cumulative tightening.",
+    "source": "Federal Reserve Board, May 3, 2023, 2:00 p.m. EDT statement",
+    "source_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230503a.htm"
+  }
+]

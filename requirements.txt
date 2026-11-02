@@ -1,0 +1,8 @@
+# Tested together on CPython 3.12.14; CI also targets Python 3.13.
+streamlit==1.60.0
+pandas==2.3.3
+numpy==2.3.5
+plotly==6.9.0
+yfinance==1.7.0
+exchange-calendars==4.13.2
+pytest==9.2.0

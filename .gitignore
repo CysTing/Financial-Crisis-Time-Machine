@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+data/cache/
+.streamlit/secrets.toml
+.env
+work/
+outputs/
+*.log
