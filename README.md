@@ -1,5 +1,6 @@
 # FINANCIAL TIME MACHINE
 
+Streamlit app link: https://cysting-financial-crisis.streamlit.app/
 ### Would Your Strategy Survive 2008?
 
 A causal historical portfolio simulator and quantitative research laboratory. Enter a crisis with $100,000, observe one close at a time, submit next-session investment decisions, and measure what survived.
