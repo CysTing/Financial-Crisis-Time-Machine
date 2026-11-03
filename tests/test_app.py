@@ -74,10 +74,11 @@ def test_survival_trade_advance_rerun_pages_reports_and_reset():
     # AppTest drives download-button reruns; browser smoke additionally checks
     # actual downloaded file bytes.
     downloads = app.get("download_button")
-    assert len(downloads) == 4
+    assert len(downloads) == 5
     assert {element.proto.label for element in downloads} == {
         "Download self-contained HTML report", "Download replay CSV",
         "Download trade ledger CSV", "Download decision history CSV",
+        "Download run passport JSON",
     }
     download_labels=[element.label for element in app.download_button]
     for label in download_labels:
@@ -124,7 +125,7 @@ def test_completed_crisis_analysis_and_final_report_render():
     app.radio(key="page").set_value("Final Performance Report").run(timeout=180)
     _assert_clean(app)
     assert any("DID YOUR PORTFOLIO SURVIVE" in element.value for element in app.subheader)
-    assert len(app.get("download_button")) == 4
+    assert len(app.get("download_button")) == 5
 
 
 def test_report_benchmark_selection_changes_comparison_without_advancing():

@@ -6,6 +6,17 @@ A causal historical portfolio simulator and quantitative research laboratory. En
 
 Built to make financial engineering inspectable: every allocation has a signal date, every execution has a cash ledger, and every performance number comes from the shared accounting engine.
 
+The central engineering question is **“Can you explain and reproduce this number?”** The replay pairs next-session execution with a revealed-data boundary, an inspectable ledger, computed reconciliation checks, and a downloadable run passport. The same accounting code powers the interactive experience and the research laboratory.
+
+## Try it in three minutes
+
+1. Run the app, then select **Start the crisis showcase** on Mission Control. It uses explicitly labeled synthetic prices, USD 100,000, 5 bps per side, and monthly 60/40 SPY/AGG allocation. The replay is already advanced to **19 February 2020**; an existing active replay is offered for resumption instead of being overwritten.
+2. Advance to the **next month-end**. The engine processes every intervening session through **31 March 2020**. Inspect the portfolio pulse, allocation, and pending order. Synthetic moves illustrate the interaction; they are not historical COVID returns.
+3. Open **Replay integrity**. Follow the latest close from holdings and costs to the equity change, then select **Run corruption drill**. Three separate copied snapshots receive deliberate cash, future-date, and P&L faults; inspect which checks detect them and confirm that the original snapshot is unchanged. Download the run passport JSON to connect the visual result to its numerical and data provenance.
+4. Open the interim report, then the separate retrospective Laboratory if time permits. Report exports stop at the replay clock; Laboratory deliberately evaluates the complete scenario.
+
+Full setup, methodology, and a manual scenario walkthrough follow below.
+
 ## The experience
 
 | Workspace | What it does |
@@ -22,9 +33,9 @@ The replay adds context without manufacturing drama. A **portfolio pulse** ident
 
 Screenshots in `docs/screenshots/` are captured from the running application. Any demonstration results shown there use visibly labeled synthetic prices; they are not historical performance.
 
-Every app chart includes **SYNTHETIC DEMO** or **HISTORICAL DATA** inside the figure, so the source label remains in native PNG downloads. Use the report's labeled HTML, replay, trade-ledger, and decision-history export buttons, or Laboratory's comparison CSV; the data grid's raw CSV shortcut is hidden. Laboratory exports are rectangular CSV files with source, retrospective research mode, scenario, benchmark, and evaluation dates on each row, while metric columns remain numeric. HTML provenance also records the strategy and its parameters.
+Every app chart includes **SYNTHETIC DEMO** or **HISTORICAL DATA** inside the figure, so the source label remains in native PNG downloads. Use the report's labeled HTML, replay, trade-ledger, and decision-history export buttons, or Laboratory's comparison CSV; the data grid's raw CSV shortcut is hidden. Laboratory exports are rectangular CSV files with source, retrospective research mode, scenario, benchmark, and evaluation dates on each row, while metric columns remain numeric. HTML provenance also records the strategy and its parameters. Formula-like journal text receives an apostrophe prefix in CSV so spreadsheet applications treat it as literal text; financial numeric columns and the original escaped HTML note are unchanged.
 
-![Mission Control](docs/screenshots/mission-desktop.jpg)
+![Mission Control](docs/screenshots/mission-showcase-desktop.png)
 
 ![Synthetic demonstration: strategy comparison](docs/screenshots/laboratory-desktop.jpg)
 
@@ -45,6 +56,8 @@ Activation is optional: use `.\.venv\Scripts\python.exe` instead of `python` if 
 Windows convenience launcher: `powershell -ExecutionPolicy Bypass -File .\run.ps1` creates a local environment, installs requirements, and starts the app. It also recognizes the bundled Codex Python runtime if the Windows `python` alias is broken. Add `-Check` to run the offline tests instead of launching.
 
 The entrypoint is **`app.py` in the repository root**. The dependency file is **`requirements.txt` in the repository root**.
+
+Both Mission Control and Laboratory support starting capital from **USD 1,000 to USD 1 billion**, with execution costs from **0 to 100 bps per side**. Blank numeric entries restore their configured defaults. Invalid allocations are explained before execution.
 
 ## A 2008 walkthrough
 
@@ -164,6 +177,8 @@ Remove-Item Env:FTM_INTEGRATION
 ```
 
 GitHub Actions is configured for push and pull requests. A local passing suite is distinct from a completed GitHub Actions run. See [acceptance evidence](docs/ACCEPTANCE.md) for observed commands/results and limits of verification.
+
+The final reliability suite includes every scenario/strategy lifecycle through reports and a fresh attempt, all-cash completion at every custom frequency, saved/reopened widget attachment bytes, extreme supported inputs, corrupt-cache recovery, and literal CSV journal text. See `docs/ACCEPTANCE.md` for exact observed results and browser-verification limits.
 
 ## Publish with GitHub Desktop
 

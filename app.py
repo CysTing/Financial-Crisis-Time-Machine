@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+import math
 import pandas as pd
 import streamlit as st
 
@@ -11,6 +12,7 @@ from core.backtest_engine import Simulation
 from core.data_loader import DataError, load_market_data
 from core.event_timeline import visible_events
 from core.experience import market_pulse,report_debrief
+from core.integrity import build_integrity_snapshot,build_run_passport,passport_json,run_integrity_challenge
 from core.metrics import performance_metrics, survival_score, covariance_risk_contributions
 from core.reporting import build_html_report, build_csv_report, build_strategy_comparison_csv
 from core.scenarios import SCENARIOS
@@ -18,12 +20,15 @@ from core.strategies import STRATEGIES, make_strategy
 from ui import charts
 from ui.styling import apply_theme
 from ui.components import render_market_pulse,render_debrief
+from ui.integrity import render_integrity
 
 st.set_page_config(page_title="Financial Time Machine", page_icon="◷", layout="wide")
 apply_theme()
 PAGES = ["Mission Control", "Financial Time Machine", "Strategy Laboratory", "Crisis Analysis", "Final Performance Report"]
 SOURCES = ["Historical adjusted prices", "Synthetic offline demonstration"]
 ROOT = Path(__file__).resolve().parent
+MIN_CAPITAL = 1000.0
+MAX_CAPITAL = 1_000_000_000.0
 
 
 @st.cache_data(ttl=3600, max_entries=12, show_spinner=False)
@@ -37,10 +42,26 @@ def go(page: str) -> None:
     st.session_state.page = page
 
 
+def reset_navigation_scroll() -> None:
+    """Run once after a logical workspace change, including guarded pages."""
+    if st.session_state.get("visible_workspace")==st.session_state.page:
+        return
+    st.session_state.visible_workspace=st.session_state.page
+    st.session_state.navigation_epoch=st.session_state.get("navigation_epoch",0)+1
+    epoch=int(st.session_state.navigation_epoch)
+    st.html(f'''<script>
+      // Navigation {epoch}; trusted static code, no user-provided JavaScript.
+      requestAnimationFrame(() => {{
+        const pane = document.querySelector('[data-testid="stMain"]');
+        if (pane) pane.scrollTo({{top: 0, left: 0, behavior: 'instant'}});
+      }});
+    </script>''',unsafe_allow_javascript=True)
+
+
 def clear_session() -> None:
     """Reset only this browser's replay; cached market observations are immutable."""
     for key in list(st.session_state):
-        if key.startswith(("survival", "order_", "ticket_")) or key in ("benchmarks", "notice"):
+        if key.startswith(("survival", "order_", "ticket_", "replay_passport_", "report_passport_")) or key in ("benchmarks", "notice"):
             del st.session_state[key]
     st.session_state.page = "Mission Control"
 
@@ -201,6 +222,7 @@ def session_required():
     if "survival" not in st.session_state:
         st.info("Start a replay from Mission Control to open this page.")
         st.button("Open Mission Control", on_click=go, args=("Mission Control",))
+        reset_navigation_scroll()
         st.stop()
     return st.session_state.survival
 
@@ -222,7 +244,7 @@ def launch_ready_mission() -> None:
     """A callback changes navigation before widgets render, including in AppTest."""
     key,data,strategy,capital,cost=st.session_state.survival_ready
     for state_key in list(st.session_state):
-        if state_key.startswith(("order_","ticket_")) or state_key=="notice":
+        if state_key.startswith(("order_","ticket_","replay_passport_","report_passport_")) or state_key=="notice":
             del st.session_state[state_key]
     scenario=SCENARIOS[key]
     st.session_state.survival = Simulation(data.prices,scenario.start,scenario.end,capital,cost,
@@ -233,9 +255,52 @@ def launch_ready_mission() -> None:
     st.session_state.survival_journal=[]
     st.session_state.survival_pulse=None
     st.session_state.survival_pulse_seen=False
+    st.session_state.survival_showcase=False
     st.session_state.pop("survival_ready",None)
     st.session_state.pop("survival_ready_config",None)
     st.session_state.page="Financial Time Machine"
+
+
+def launch_showcase() -> None:
+    """An explicit offline introduction using the same engine as every replay.
+
+    Never replace an active session. Pre-roll is disclosed, and only the
+    resulting restricted snapshot is sent to presentation code.
+    """
+    if "survival" in st.session_state:
+        go("Financial Time Machine")
+        return
+    try:
+        data=market_data("covid","synthetic")
+        strategy=make_strategy("Traditional 60/40")
+        st.session_state.survival_ready=("covid",data,strategy,100000.,5.)
+        launch_ready_mission()
+        sim=st.session_state.survival
+        sim.advance_to(pd.Timestamp("2020-02-19"))
+        st.session_state.survival_showcase=True
+    except (DataError,ValueError,OSError) as exc:
+        st.session_state.showcase_error=str(exc)
+
+
+def replay_integrity(view: dict, meta: dict, benchmark_name: str | None, *, key: str) -> None:
+    """Evidence is computed from the exact same revealed view used by this page."""
+    context={"scenario":SCENARIOS[meta["scenario_key"]].name,
+        "source":"synthetic demonstration" if meta["synthetic"] else "historical adjusted prices",
+        "provider":meta["provider"],"retrieved_at_utc":meta["retrieved_at"],
+        "benchmark":benchmark_name,"application":"Financial Time Machine",
+        "showcase":bool(st.session_state.get("survival_showcase",False))}
+    evidence=build_integrity_snapshot(view)
+    passport=build_run_passport(view,context)
+    fingerprint=passport["payload_fingerprint"]
+    challenge=st.session_state.get(f"{key}_challenge") if st.session_state.get(f"{key}_challenge_for")==fingerprint else None
+    render_integrity(evidence,passport_json(passport),key=key,challenge=challenge,
+        on_challenge=challenge_replay_integrity,challenge_args=(view,key,fingerprint))
+
+
+def challenge_replay_integrity(view: dict, key: str, fingerprint: str) -> None:
+    """Corrupt copies, preserving the engine, journal, pending target, and clock."""
+    st.session_state[f"{key}_challenge"]=run_integrity_challenge(view)
+    st.session_state[f"{key}_challenge_for"]=fingerprint
 
 
 def reveal_benchmarks(sim):
@@ -288,11 +353,32 @@ def event_feed(events):
 
 
 def mission():
-    st.html('<div class="hero"><div class="eyebrow">RESEARCH THROUGH REPLAY / EST. 2007</div>'
-        '<h1>Time is your<br><span class="accent">greatest risk.</span></h1>'
-        '<p>Step into history with $100,000. Build a portfolio, make your decisions, and discover whether your strategy survives the next crisis.</p>'
-        '<span class="stamp">CAUSAL EXECUTION</span> &nbsp; <span class="stamp">7 ASSETS + CASH</span> &nbsp; <span class="stamp">NO LEVERAGE</span>'
-        '<br><a class="mission-anchor" href="#configure-your-mission">Configure your mission ↓</a></div>')
+    st.html('''<div class="hero hero-grid">
+      <div><div class="eyebrow">FINANCIAL TIME MACHINE / INTERACTIVE RESEARCH</div>
+      <h1>Replay a crisis.<br><span class="accent">Inspect every<br class="hero-break"> decision.</span></h1>
+      <p>A portfolio simulator with an inspectable engine. Make decisions using revealed data, feel the impact of a crisis, and trace every dollar back to the ledger.</p>
+      <span class="stamp">3 CRISES</span> &nbsp; <span class="stamp">6 STRATEGIES</span> &nbsp; <span class="stamp">7 ASSETS + CASH</span></div>
+      <div class="engine-trace" aria-label="Illustrative execution sequence">
+        <div class="eyebrow">THE ENGINE, IN ONE TRADE</div>
+        <div class="trace-row"><span class="trace-node">01</span><div><b>Observe. Then decide.</b><p>Close t · Queue a 100% asset target</p></div></div>
+        <div class="trace-row"><span class="trace-node">02</span><div><b>Execute at the next close.</b><p>Close t+1 · Size units after costs</p></div></div>
+        <div class="trace-row"><span class="trace-node">03</span><div><b>Account for every dollar.</b><p>USD 99,950.02 invested + 49.98 costs<br>= USD 100,000.00 starting cash</p></div></div>
+        <div class="trace-footer">ILLUSTRATIVE INITIAL BUY · 5 BPS · NO PRICE MOVE<br>Reconciled accounting. Revealed data. Reproducible evidence.</div>
+      </div></div>''')
+    with st.container(border=True,key="showcase_entry"):
+        intro,action=st.columns([2.4,1],vertical_alignment="center")
+        with intro:
+            st.markdown("**A crisis. A portfolio. Every decision on record.**")
+            st.caption("Interactive offline showcase · Explicit synthetic prices · No download or API key")
+        with action:
+            if "survival" in st.session_state:
+                st.button("Resume your replay",key="resume_replay",type="primary",width="stretch",on_click=go,args=("Financial Time Machine",))
+            else:
+                st.button("Start the crisis showcase",key="start_showcase",type="primary",width="stretch",on_click=launch_showcase)
+        st.caption("COVID scenario · USD 100,000 · 60/40 monthly · 5 bps per side · Pre-rolled from January 2019 to 19 February 2020. Fictional prices; factual event sources.")
+        if st.session_state.get("showcase_error"):
+            st.error(st.session_state.pop("showcase_error"))
+    st.markdown('<a class="mission-anchor" href="#configure-your-mission">Or configure your own mission ↓</a>',unsafe_allow_html=True)
     st.subheader("Choose your point of entry")
     for col, scenario in zip(st.columns(3), SCENARIOS.values()):
         with col, st.container(border=True,height="stretch"):
@@ -307,7 +393,7 @@ def mission():
         if source == SOURCES[1]:
             source_banner(True)
         a,b = st.columns(2)
-        capital = a.number_input("Initial capital (USD)", min_value=1000., max_value=1e9, value=100000., step=10000.)
+        capital = a.number_input("Initial capital (USD)", min_value=MIN_CAPITAL, max_value=MAX_CAPITAL, value=100000., step=10000.)
         cost = b.number_input("Cost per side (basis points)", min_value=0., max_value=100., value=5., step=1.)
         strategy = strategy_controls("mission")
         configuration=(key,source,float(capital),float(cost),repr(strategy))
@@ -385,6 +471,8 @@ def replay():
     m=performance_metrics(history.equity,benchmark=primary,trades=view["ledger"])
     d.metric("Maximum drawdown",fmt(m.get("max_drawdown")))
     st.caption("Adjusted close units · Costs included · Cash interest 0% · Risk-free assumption 0% · No external cash flows")
+    if st.session_state.get("survival_showcase"):
+        st.caption("SHOWCASE · Pre-rolled from 2 Jan 2019. Try Next month-end, then open Replay integrity below the chart. The Final Performance Report offers a matching interim report.")
     if st.session_state.get("notice"):
         st.success(st.session_state.pop("notice"))
     if st.session_state.get("order_error"):
@@ -403,6 +491,7 @@ def replay():
         st.session_state.survival_pulse_seen=True
     events=visible_events(sim.current_date,start=history.index.min())
     show_chart(charts.equity_chart({"Your portfolio":history.equity,**bench},events),width="stretch")
+    replay_integrity(view,meta,benchmark_name,key="replay_passport")
     left,right=st.columns([1.7,1],gap="large")
     with left:
         st.subheader("Allocation desk")
@@ -460,8 +549,18 @@ def laboratory():
     key=st.selectbox("Research scenario",list(SCENARIOS),format_func=lambda k:SCENARIOS[k].name,key="lab_scenario")
     source=st.radio("Research data",SOURCES,key="lab_source")
     st.caption(f"Requested data: {source}. Saved results below retain the source used when they were run.")
+    # Recover a session created before the research capital bound was added.
+    # Both modes share the same numerically supported USD capital range.
+    previous_capital=st.session_state.get("lab_capital",100000.)
+    if not isinstance(previous_capital,(int,float)) or not math.isfinite(previous_capital) or not MIN_CAPITAL<=previous_capital<=MAX_CAPITAL:
+        st.session_state.lab_capital=100000.
+        st.warning("Research capital must be between USD 1,000 and USD 1 billion. The input has been reset to USD 100,000.")
+    saved_capital=st.session_state.get("lab_result",{}).get("capital",100000.)
+    if not math.isfinite(saved_capital) or not MIN_CAPITAL<=saved_capital<=MAX_CAPITAL:
+        st.session_state.pop("lab_result",None)
+        st.warning("The saved research run exceeded the supported capital range. Run research again with valid settings.")
     a,b=st.columns(2)
-    capital=a.number_input("Research capital (USD)",min_value=1000.,value=100000.,key="lab_capital")
+    capital=a.number_input("Research capital (USD)",min_value=MIN_CAPITAL,max_value=MAX_CAPITAL,value=100000.,key="lab_capital")
     cost=b.number_input("Research cost per side (bps)",min_value=0.,max_value=100.,value=5.,key="lab_cost")
     chosen=st.multiselect("Strategies to compare",STRATEGIES,default=list(STRATEGIES),key="lab_chosen")
     with st.expander("Custom allocation and rebalancing",expanded=False):
@@ -677,6 +776,7 @@ def report():
     b.download_button("Download decision history CSV",build_csv_report(view["history"],metadata=metadata,
         current_date=sim.current_date,completed=sim.complete,kind="decisions",decisions=view["decisions"]),
         "financial-time-machine-decisions.csv","text/csv",width="stretch")
+    replay_integrity(view,meta,benchmark_name,key="report_passport")
     metrics_panel(view["history"],primary,view["ledger"],confidence=confidence)
     if sim.complete:
         st.subheader("DID YOUR PORTFOLIO SURVIVE THE CRISIS?")
@@ -743,3 +843,7 @@ with st.sidebar:
 {"Mission Control":mission,"Financial Time Machine":replay,"Strategy Laboratory":laboratory,
  "Crisis Analysis":crisis_analysis,"Final Performance Report":report}[st.session_state.page]()
 st.html('<div class="footnote">FINANCIAL TIME MACHINE / CAUSAL REPLAY ENGINE · USD · FRACTIONAL UNITS · LONG ONLY</div>')
+
+# Logical workspace changes should open at the new page's heading. Ordinary
+# reruns (orders, downloads, benchmark changes) preserve the reading position.
+reset_navigation_scroll()

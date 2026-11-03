@@ -283,6 +283,14 @@ def load_market_data(
         def read_cache() -> tuple[pd.DataFrame, dict] | None:
             try:
                 cached_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if not isinstance(cached_meta,dict):
+                    return None
+                required=("provider","request_key","raw_fingerprint","retrieved_at_utc")
+                if any(not isinstance(cached_meta.get(field),str) or not cached_meta[field].strip() for field in required):
+                    return None
+                retrieved=datetime.fromisoformat(cached_meta["retrieved_at_utc"])
+                if retrieved.tzinfo is None or retrieved.utcoffset() is None:
+                    return None
                 if cached_meta.get("provider") != "Yahoo Finance via yfinance" or cached_meta.get("request_key") != key_data:
                     return None
                 cached = pd.read_csv(csv_path, index_col=0, parse_dates=True, float_precision="round_trip")

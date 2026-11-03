@@ -27,3 +27,4 @@ if ($Check) {
 } else {
     & $localPython -m streamlit run app.py
 }
+exit $LASTEXITCODE

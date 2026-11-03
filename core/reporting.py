@@ -245,6 +245,19 @@ def build_csv_report(
         # than producing an unlabeled file containing column headers alone.
         selected = selected.reindex([0])
         selected["export_note"] = "No revealed observations in this table."
+    if "rationale" in selected:
+        # A journal entry is literal user text, even when it resembles a
+        # spreadsheet formula. Keep financial numeric columns unchanged.
+        def literal_rationale(value):
+            if not isinstance(value, str):
+                return value
+            stripped = value.lstrip()
+            leading = value[:len(value) - len(stripped)]
+            if stripped.startswith(("=", "+", "-", "@")) or any(char in leading for char in "\t\r"):
+                return "'" + value
+            return value
+
+        selected["rationale"] = selected["rationale"].map(literal_rationale)
     selected.insert(0, "report_status", status)
     selected.insert(0, "as_of", cutoff.strftime("%Y-%m-%d"))
     selected.insert(0, "data_source", source_label)

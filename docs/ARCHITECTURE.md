@@ -159,3 +159,27 @@ use its matching revealed index. Laboratory keeps requested inputs distinct from
 saved-run provenance; chart filters only affect presentation. Exact duplicate
 equity paths may be hidden initially, while all completed strategy results remain
 available in the comparison table and exports.
+
+## Inspectable demonstration and run evidence
+
+Mission Control's one-click offline showcase constructs an explicitly synthetic
+COVID replay using USD 100,000, 5 bps per side, and monthly 60/40 SPY/AGG allocation.
+It processes the engine through 19 February 2020 before opening the replay; it does
+not fabricate an account history or bypass execution. An existing active replay
+is offered for resumption instead of being overwritten. The next month-end action
+then processes every session through 31 March 2020 using the ordinary replay path.
+
+The expandable Replay integrity presentation works from the same copied revealed
+snapshot as the replay and report. Computed accounting, timing, and boundary
+diagnostics expose recorded evidence and numerical residuals. They are snapshot
+diagnostics, not a replacement for independent tests or a security audit. Missing
+evidence, such as an initial ledger before any fill, must not be presented as a
+completed execution.
+
+The downloadable JSON run passport associates configuration, source provenance,
+as-of bounds, and deterministic content fingerprints with the displayed run.
+Fingerprints support comparison and reproducibility; they do not authenticate an
+author or create an immutable, cryptographically signed audit trail. The passport
+does not grant market-data redistribution rights or restore a browser session.
+
+Logical workspace navigation resets the main scroll pane to the heading. An ordinary same-page rerun preserves its reading position. The navigation-only script is static trusted code and receives only an integer navigation epoch.
