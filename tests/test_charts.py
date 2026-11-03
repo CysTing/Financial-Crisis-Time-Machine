@@ -115,7 +115,11 @@ def test_chart_title_and_scrollable_legend_have_separate_reserved_regions(trace_
     values = pd.Series([100000, 101000, 99000], index=dates)
     payload = _payload(charts.equity_chart({f"Strategy {i}": values for i in range(trace_count)}))
     layout = payload["layout"]
-    assert layout["title"]["y"] >= .95
+    # A high normalized y clipped two-line titles above the SVG in the browser.
+    # Reserve enough actual pixels for the title baseline and subtitle together.
+    title_inset=(1-layout["title"]["y"])*layout["height"]
+    assert title_inset>=26
+    assert title_inset+38<=layout["margin"]["t"]
     assert layout["title"]["yanchor"] == "top"
     assert layout["margin"]["t"] >= 70
     assert "<br>" in layout["title"]["text"]
@@ -185,3 +189,16 @@ def test_allocation_labels_remain_inside_and_do_not_repeat_tickers():
     assert pie["textinfo"] == "percent"
     assert pie["textposition"] == "inside"
     assert payload["layout"]["legend"]["y"] < 0
+
+
+@pytest.mark.parametrize("synthetic,label",[(True,"SYNTHETIC DEMO"),(False,"HISTORICAL DATA")])
+def test_native_plot_export_keeps_source_without_changing_revealed_data(synthetic,label):
+    dates=pd.DatetimeIndex(["2020-01-02","2020-01-03","2020-01-06"])
+    fig=charts.equity_chart({"Portfolio":pd.Series([100.,101.,99.],index=dates)},current_date=dates[1])
+    before=_payload(fig)
+    after=_payload(charts.with_source_label(fig,synthetic))
+    assert label in after["layout"]["title"]["text"]
+    assert after["data"]==before["data"]
+    assert after["layout"]["xaxis"]["range"]==before["layout"]["xaxis"]["range"]
+    assert label in _payload(charts.with_source_label(fig,synthetic))["layout"]["title"]["text"]
+    assert fig.layout.title.text.count(label)==1

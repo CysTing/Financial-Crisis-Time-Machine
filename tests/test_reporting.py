@@ -5,7 +5,7 @@ import io
 import pandas as pd
 import pytest
 
-from core.reporting import build_csv_report, build_html_report, formatted_metric_table
+from core.reporting import build_csv_report, build_html_report, build_strategy_comparison_csv, formatted_metric_table
 
 
 @pytest.fixture
@@ -60,11 +60,13 @@ def test_html_is_self_contained_escaped_and_recomputes_restricted_metrics(inputs
 
 def test_completed_report_score_and_same_window_comparison(inputs):
     history, trades, metadata, events = inputs
+    metadata={**metadata,"benchmark_name":"SPY buy & hold"}
     benchmark = pd.Series([100.0, 95.0], index=history.index[:2])
     html = build_html_report(history, trades, metadata, events=events, benchmark=benchmark, current_date="2007-01-04", completed=True)
     assert "DID YOUR PORTFOLIO SURVIVE THE CRISIS?" in html
     assert "Educational survival score:" in html
     assert "$99.00" in html and "$95.00" in html
+    assert "SPY buy &amp; hold" in html
     with pytest.raises(ValueError, match="identical evaluation"):
         build_html_report(history, trades, metadata, benchmark=benchmark.iloc[:1], current_date="2007-01-04")
 
@@ -115,3 +117,73 @@ def test_metric_presentation_labels_percentage_points_and_dollars():
     assert values["Trading costs"]=="$1,234.50"
     assert values["Gross turnover"]=="1.75×"
     assert values["Sharpe ratio"]=="N/A"
+
+
+@pytest.mark.parametrize("name,ending",[("SPY buy & hold",95.0),("60/40 monthly",102.0)])
+def test_selected_benchmark_exports_keep_matching_revealed_window(inputs,name,ending):
+    history,trades,metadata,_=inputs
+    reference=pd.Series([100.0,ending,9999999.0],index=history.index)
+    public={**metadata,"benchmark_name":name}
+    csv=build_csv_report(history,trades,public,current_date="2007-01-04",benchmark=reference)
+    exported=pd.read_csv(io.StringIO(csv))
+    assert list(exported["date"])==["2007-01-03","2007-01-04"]
+    assert exported["benchmark_equity"].tolist()==[100.0,ending]
+    html=build_html_report(history,trades,public,benchmark=reference,current_date="2007-01-04")
+    assert name.replace("&","&amp;") in html
+    assert "9999999" not in html and "2007-01-05" not in html
+
+
+def test_strategy_comparison_is_rectangular_with_source_on_every_row():
+    table = pd.DataFrame({
+        "total_return": [.125, -.25], "total_costs": [49.97501249375312, 103.25],
+        "sharpe": [1.75, None], "observations": [1007, 1007],
+    }, index=["Buy and Hold", "Momentum, monthly"])
+    original = table.copy(deep=True)
+    csv = build_strategy_comparison_csv(table, "synthetic", "2008 crisis, research", "SPY buy & hold",
+                                        "2007-01-03", "2010-12-31")
+    # A standard reader needs no custom skiprows/header handling.
+    exported = pd.read_csv(io.StringIO(csv))
+    assert len(exported) == 2
+    assert csv.startswith("data_source,research_mode,scenario,benchmark_name,evaluation_start,evaluation_end,strategy,")
+    assert exported.data_source.str.contains("SYNTHETIC DEMONSTRATION").all()
+    assert exported.research_mode.str.contains("Retrospective research").all()
+    assert exported.scenario.eq("2008 crisis, research").all()
+    assert exported.benchmark_name.eq("SPY buy & hold").all()
+    assert exported.evaluation_start.eq("2007-01-03").all()
+    assert exported.evaluation_end.eq("2010-12-31").all()
+    pd.testing.assert_frame_equal(exported.set_index("strategy")[table.columns], table.rename_axis("strategy"))
+    pd.testing.assert_frame_equal(table, original)
+
+
+def test_strategy_comparison_retains_genuine_source_and_optional_dates():
+    table = pd.DataFrame({"total_return": [.2]}, index=["Trend"])
+    exported = pd.read_csv(io.StringIO(build_strategy_comparison_csv(table, "Historical adjusted prices", "COVID", "60/40 monthly")))
+    assert exported.data_source.tolist() == ["Historical adjusted prices"]
+    assert exported.evaluation_start.isna().all() and exported.evaluation_end.isna().all()
+    assert exported.total_return.tolist() == [.2]
+
+
+@pytest.mark.parametrize("field", ["data_source", "research_mode", "scenario", "benchmark_name", "evaluation_start", "evaluation_end", "strategy"])
+def test_strategy_comparison_rejects_reserved_metric_names(field):
+    table = pd.DataFrame({field: [.1]}, index=["Trend"])
+    with pytest.raises(ValueError, match="reserved"):
+        build_strategy_comparison_csv(table, "synthetic", "Crisis", "SPY")
+
+
+@pytest.mark.parametrize("source", ["", "  ", None])
+def test_strategy_comparison_rejects_missing_source(source):
+    with pytest.raises(ValueError, match="data_source"):
+        build_strategy_comparison_csv(pd.DataFrame({"total_return": [.1]}, index=["Trend"]), source, "Crisis", "SPY")
+
+
+def test_strategy_comparison_rejects_empty_or_ambiguous_tables_and_dates():
+    with pytest.raises(ValueError, match="at least one"):
+        build_strategy_comparison_csv(pd.DataFrame(), "synthetic", "Crisis", "SPY")
+    duplicates = pd.DataFrame({"total_return": [.1, .2]}, index=["Trend", "Trend"])
+    with pytest.raises(ValueError, match="Strategy labels"):
+        build_strategy_comparison_csv(duplicates, "synthetic", "Crisis", "SPY")
+    duplicate_metrics = pd.DataFrame([[.1, .2]], index=["Trend"], columns=["return", "return"])
+    with pytest.raises(ValueError, match="Metric columns"):
+        build_strategy_comparison_csv(duplicate_metrics, "synthetic", "Crisis", "SPY")
+    with pytest.raises(ValueError, match="Evaluation start"):
+        build_strategy_comparison_csv(pd.DataFrame({"total_return": [.1]}, index=["Trend"]), "synthetic", "Crisis", "SPY", "2010-01-02", "2010-01-01")

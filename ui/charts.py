@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from html import escape
 import math
+import re
 
 import numpy as np
 import pandas as pd
@@ -17,15 +18,34 @@ from core.metrics import drawdown_series, rolling_volatility
 COLORS = ["#5de4d3", "#6da6ff", "#f5bc63", "#bba2ff", "#f58191", "#79bdb4", "#ced6e2", "#64748b"]
 
 
+def with_source_label(fig: go.Figure, synthetic: bool) -> go.Figure:
+    """Keep provenance inside the figure, including native PNG downloads."""
+    main,_,subtitle=str(fig.layout.title.text or "Portfolio research").partition("<br>")
+    subtitle=re.sub(r"<[^>]+>","",subtitle)
+    for prefix in ("SYNTHETIC DEMO","HISTORICAL DATA"):
+        if subtitle.startswith(prefix):
+            subtitle=subtitle[len(prefix):].removeprefix(" · ")
+    label="SYNTHETIC DEMO" if synthetic else "HISTORICAL DATA"
+    detail=label+(f" · {subtitle}" if subtitle else "")
+    color="#d5b77d" if synthetic else "#91a3b8"
+    fig.update_layout(title=dict(text=f"{main}<br><span style='font-size:10px;color:{color}'>{escape(detail)}</span>",
+        y=1-28/float(fig.layout.height or 370)))
+    return fig
+
+
 def style(fig: go.Figure, title: str, ytitle: str = "", height: int = 370) -> go.Figure:
     main,separator,subtitle=title.partition(" • ")
     title_text=main+(f"<br><span style='font-size:11px;color:#8296af'>{subtitle}</span>" if separator else "")
     has_legend=len(fig.data)>1 or any(trace.type=="pie" for trace in fig.data)
     legend_items=sum(len(trace.labels) if trace.type=="pie" else 1 for trace in fig.data)
     many_items=legend_items>3
-    fig.update_layout(title=dict(text=title_text, x=0, xanchor="left", y=.98, yanchor="top",font=dict(size=15)), template="plotly_dark",
+    figure_height=height+(140 if many_items else 100 if has_legend else 0)
+    # Plotly applies different SVG baselines to one- and two-line titles. Reserve
+    # a fixed pixel inset so subtitles cannot push the first line above the SVG.
+    title_inset=28 if separator else 17
+    fig.update_layout(title=dict(text=title_text, x=0, xanchor="left", y=1-title_inset/figure_height, yanchor="top",font=dict(size=15)), template="plotly_dark",
                       paper_bgcolor="#090f1b", plot_bgcolor="#090f1b", font=dict(color="#aabbd0", family="Arial"),
-                      colorway=COLORS, height=height+(140 if many_items else 100 if has_legend else 0), margin=dict(l=12,r=20,t=76,b=180 if many_items else 150 if has_legend else 46),
+                      colorway=COLORS, height=figure_height, margin=dict(l=12,r=20,t=76,b=180 if many_items else 150 if has_legend else 46),
                       showlegend=has_legend,
                       legend=dict(orientation="h",y=-.16,x=0,yanchor="top",xanchor="left",font=dict(size=11),
                                   entrywidth=220,entrywidthmode="pixels",maxheight=120 if many_items else 96), hovermode="x unified",
@@ -108,8 +128,9 @@ def equity_chart(
         indices.append(series.index)
         visible_values.extend(series.to_numpy(dtype=float))
         hover = "%{y:,.2f} index points<extra>%{fullData.name}</extra>" if normalized else "%{y:$,.2f}<extra>%{fullData.name}</extra>"
+        benchmark=name.startswith("Benchmark") or name in ("SPY buy & hold","60/40 monthly")
         fig.add_trace(go.Scatter(x=series.index.to_pydatetime().tolist(), y=series.tolist(), name=name,
-                                 mode="lines+markers" if len(series) == 1 else "lines", line=dict(width=2),
+                                 mode="lines+markers" if len(series) == 1 else "lines", line=dict(width=3 if name=="Your portfolio" else 2,dash="dot" if benchmark else "solid"),
                                  marker=dict(size=6), hovertemplate=hover))
     visible_dates = [date for index in indices for date in index]
     last_visible = _date(current_date) if current_date is not None else (max(visible_dates) if visible_dates else None)

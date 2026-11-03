@@ -11,14 +11,18 @@ Built to make financial engineering inspectable: every allocation has a signal d
 | Workspace | What it does |
 |---|---|
 | Mission Control | Select a scenario, genuine historical data or an explicit synthetic demo, capital, costs, and a strategy. Review eligibility before launching. |
-| Financial Time Machine | Advance one session, five sessions, or to next calendar month-end; queue/cancel allocations, buy/sell through target changes, review holdings and disclosed events. |
-| Strategy Laboratory | Independently compare all six strategies over the same historical window. This workspace is explicitly retrospective research. |
+| Financial Time Machine | Advance one session, five sessions, or to next calendar month-end; queue/cancel allocations, keep a dated decision journal, and review holdings, portfolio pulses, and disclosed events. |
+| Strategy Laboratory | Independently compare all six strategies over the same historical window; filter displayed curves and inspect the full results table. This workspace is explicitly retrospective research. |
 | Crisis Analysis | After replay completion: drawdowns, rolling volatility/correlations, empirical tail risk, crisis-window comparisons, and P&L/risk attribution. |
-| Final Performance Report | Partial reports use revealed observations only; completed reports add the transparent survival score. Download CSV and self-contained HTML. |
+| Final Performance Report | Partial reports use revealed observations only; completed reports add the transparent survival score. Review a computed three-observation debrief and download equity, trade, decision CSVs, or self-contained HTML. |
 
 Three scenarios are available: **2007–2010 financial crisis**, **2019–2021 COVID crash**, and **2021–2023 inflation/rate shock**. The supported universe is SPY, QQQ, AGG, IEF, TLT, GLD, SHY, and cash, subject to inception and full-window price validation.
 
+The replay adds context without manufacturing drama. A **portfolio pulse** identifies the largest daily account move among newly revealed sessions, including a move crossed during a weekly or monthly advance. Moves of at least ±3% receive a brief, restrained visual emphasis. The sidebar's **Display preferences** can disable animation, and system reduced-motion preferences are respected. A **decision journal** records reasoning before later closes reveal the result; observations can also be saved without trading. The report debrief identifies the toughest session, deepest drawdown/recovery, and the recorded cash/cost/benchmark tradeoff. All observations come from actual simulation history. See [experience and motion rules](docs/EXPERIENCE.md).
+
 Screenshots in `docs/screenshots/` are captured from the running application. Any demonstration results shown there use visibly labeled synthetic prices; they are not historical performance.
+
+Every app chart includes **SYNTHETIC DEMO** or **HISTORICAL DATA** inside the figure, so the source label remains in native PNG downloads. Use the report's labeled HTML, replay, trade-ledger, and decision-history export buttons, or Laboratory's comparison CSV; the data grid's raw CSV shortcut is hidden. Laboratory exports are rectangular CSV files with source, retrospective research mode, scenario, benchmark, and evaluation dates on each row, while metric columns remain numeric. HTML provenance also records the strategy and its parameters.
 
 ![Mission Control](docs/screenshots/mission-desktop.jpg)
 
@@ -45,13 +49,14 @@ The entrypoint is **`app.py` in the repository root**. The dependency file is **
 ## A 2008 walkthrough
 
 1. In Mission Control, select the financial-crisis scenario, $100,000, and 5 bps per side.
-2. Select historical data, or explicitly choose the synthetic demonstration for an offline tour. Initialize, review the eligible assets/provenance, then launch.
+2. Select historical data, or explicitly choose the synthetic demonstration for an offline tour. Initialize, review the scenario, capital, costs, rule, eligible assets, and provenance, then launch. Changing these settings invalidates the previous preflight and requires initialization again.
 3. The replay begins at the first actual exchange close: January 3, 2007. January 1 was a holiday and January 2 an exceptional exchange closure.
 4. Your initial balance is cash. The chosen starting allocation is pending for the next close. Advance one day to execute it; the holdings do not earn the return preceding their execution.
-5. Queue target weights totaling 100%, cancel a pending order, or move toward cash. A manual submission visibly replaces the single pending automatic target.
-6. Advance five sessions or to next month-end. Every intervening session processes prices, costs, orders, and automatic strategy signals.
-7. Read only announcements disclosed by the replay clock. Open interim reports without exposing future prices.
-8. Finish the scenario to unlock crisis analytics and the final educational score.
+5. Queue target weights totaling 100%, cancel a pending order, or move toward cash. A manual submission visibly replaces the single pending automatic target. Draft weights survive page changes within this browser session; a fresh mission clears them.
+6. Optionally write a decision-journal note before queuing the target, or choose **Save observation without trading**. The latter records your thinking at the current close without altering the pending order, holdings, or clock.
+7. Advance five sessions or to next month-end. Every intervening session processes prices, costs, orders, and automatic strategy signals. The portfolio pulse highlights the largest newly revealed daily move; its direction does not describe the net return of the entire advance.
+8. Read only announcements disclosed by the replay clock. Choose SPY or the eligible monthly 60/40 comparison benchmark in the sidebar. Open interim reports and download the decision journal without exposing future prices.
+9. Finish the scenario to unlock crisis analytics and the final educational score. Review the debrief and compare the outcome with the explicitly named benchmark.
 
 Scenario names deliberately disclose historical context. This is educational replay, not a blind forecasting experiment.
 
@@ -65,6 +70,8 @@ Scenario names deliberately disclose historical context. This is educational rep
 | Momentum Rotation | Monthly: trailing 126-session returns; top one positive asset; alphabetical ticker tie-break; no positive eligible asset means cash. Lookback is configurable. |
 | Inverse Volatility | Monthly inverse sample volatility over 63 daily returns. Exclude insufficient/zero-volatility estimates; apply per-asset caps without renormalizing above them; residual cash. |
 | User-Defined Allocation | Custom weights; none/monthly/quarterly/annual rebalancing. |
+
+In Laboratory, the allocation inside **Custom allocation and rebalancing** applies to both Buy and Hold and User-Defined Allocation; the other four rules determine their own targets. The displayed run summary records those settings. Curves with identical recorded equity are hidden initially to avoid duplicate lines, but remain available in **Display on chart** and the comparison table.
 
 SHY is an ETF with market risk and transaction costs; it is not cash. Cash earns **0%**. The separate risk-free assumption for performance ratios defaults to **0%** because a vintage-appropriate rate series is not supplied.
 
@@ -107,9 +114,11 @@ flowchart LR
     D --> H[Cash ledger + daily P&L]
     H --> I[Metrics + score]
     I --> F
+    E --> J[Pulse + debrief observations]
+    J --> F
 ```
 
-The reusable `core/` engine imports no Streamlit code. Strategies receive a trailing frame restricted to the signal date. Survival presentation consumes copied snapshots, including restricted prices, benchmark histories, decisions, and contributions. Reports independently enforce the as-of boundary and recompute metrics from restricted history. Laboratory results and replay state have separate session keys; page changes and reruns do not advance the clock or duplicate executions. Each browser session owns its own simulation objects.
+The reusable `core/` engine imports no Streamlit code. Strategies receive a trailing frame restricted to the signal date. Survival presentation consumes copied snapshots, including restricted prices, benchmark histories, decisions, and contributions. Pure experience helpers derive pulses and debrief observations from those recorded frames. The UI attaches dated journal notes to a copy of the decision log; notes do not enter strategy signals or accounting. Reports independently enforce the as-of boundary and recompute metrics from restricted history. Laboratory results and replay state have separate session keys; page changes and reruns do not advance the clock or duplicate executions. Each browser session owns its own simulation objects.
 
 ```text
 financial-time-machine/
@@ -125,8 +134,12 @@ financial-time-machine/
 │   ├── metrics.py
 │   ├── scenarios.py
 │   ├── event_timeline.py
+│   ├── experience.py
 │   └── reporting.py
-├── ui/                    # charts and theme
+├── ui/
+│   ├── charts.py
+│   ├── components.py      # factual pulse and debrief presentation
+│   └── styling.py
 ├── data/events/           # sourced historical announcements
 ├── tests/                 # deterministic numerical, leakage, state, and UI tests
 ├── docs/                  # methodology, architecture, screenshots, acceptance evidence
@@ -140,7 +153,7 @@ financial-time-machine/
 python -m pytest -q
 ```
 
-The default suite is deterministic and offline. It covers hand-calculated costs and returns, cash reconciliation, invalid weights, missing prices/inception, period-end orders, intermediate sessions, future-price perturbations, delayed return earning, benchmark windows, event disclosure, restricted exports, score monotonicity, Streamlit reruns/navigation/reset, and all six strategy types.
+The default suite is deterministic and offline. It covers hand-calculated costs and returns, cash reconciliation, invalid weights, missing prices/inception, period-end orders, intermediate sessions, future-price perturbations, delayed return earning, benchmark windows, event disclosure, restricted exports, score monotonicity, stale preflight invalidation, Streamlit reruns/navigation/reset, all six strategy types, and restricted pulse/debrief calculations. Exact final check results belong to the acceptance record below.
 
 Optional live-provider integration is separate:
 
@@ -166,7 +179,7 @@ The project is prepared for this deployment workflow. A live hosted deployment i
 
 ## Limitations and roadmap
 
-Survivorship bias comes from using today's ETF universe. Prices may be retrospectively adjusted/revised; close-to-next-close execution is a simplified convention without intraday liquidity, bid/ask spreads, limit orders, market impact, or actual dividend tax handling. Transaction bps are an assumption, not calibrated execution estimates. Sample tail-risk and annualized short-window statistics are descriptive and unstable. Historical crisis windows do not predict future losses. Provider outages, rate limits, and data rights may constrain genuine downloads. Sessions are ephemeral and reset when the server restarts.
+Survivorship bias comes from using today's ETF universe. Prices may be retrospectively adjusted/revised; close-to-next-close execution is a simplified convention without intraday liquidity, bid/ask spreads, limit orders, market impact, or actual dividend tax handling. Transaction bps are an assumption, not calibrated execution estimates. Sample tail-risk and annualized short-window statistics are descriptive and unstable. Historical crisis windows do not predict future losses. Provider outages, rate limits, and data rights may constrain genuine downloads. The source package contains no genuine market observations. Replay snapshots, drafts, and journal notes are ephemeral browser-session state, not a persistent account: download reports before resetting or restarting the server. A local price cache does not restore portfolio state.
 
 Future work: licensed point-in-time prices; ALFRED release-vintage macro data; persistent replay snapshots; richer order modeling; optional PDF reports; separately labeled Monte Carlo stress tests. These are not current features.
 

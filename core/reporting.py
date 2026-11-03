@@ -1,7 +1,8 @@
-"""Self-contained, escaped reports built only from revealed simulation history.
+"""Escaped Survival reports and explicitly retrospective Laboratory exports.
 
-Every export carries its data source and an explicit as-of boundary. Filtering
-here is defense in depth: Survival callers should already pass restricted views.
+Every export carries its data source. Survival exports additionally enforce an
+as-of boundary; filtering is defense in depth over already restricted views.
+Laboratory comparisons are separately labeled retrospective research.
 """
 
 from __future__ import annotations
@@ -16,7 +17,8 @@ from core.metrics import metric_notes, performance_metrics, survival_score
 
 PUBLIC_METADATA = (
     "scenario", "label", "data_source", "source", "provider", "retrieved_at",
-    "fingerprint", "cash_interest_annual", "risk_free_annual", "cost_bps", "capital",
+    "fingerprint", "cash_interest_annual", "risk_free_annual", "cost_bps", "capital", "benchmark_name",
+    "strategy", "strategy_parameters", "adjustment", "execution", "turnover",
 )
 
 METHODOLOGY = (
@@ -146,6 +148,64 @@ def _context(
     return revealed, public, cutoff, source_label, status
 
 
+def build_strategy_comparison_csv(
+    table: pd.DataFrame,
+    data_source: str,
+    scenario: str,
+    benchmark_name: str,
+    evaluation_start: Any | None = None,
+    evaluation_end: Any | None = None,
+) -> str:
+    """Export a rectangular, provenance-labeled retrospective comparison.
+
+    Strategy names come from the unique, nonempty string index. Metric columns
+    are copied without formatting or rescaling, so returns remain decimals and
+    money remains USD. Provenance lives in ordinary columns on every row rather
+    than a one-field preamble that would break standard CSV readers. This is a
+    full-window Laboratory export, not a Survival as-of report.
+    """
+    if not isinstance(table, pd.DataFrame):
+        raise TypeError("Strategy comparison requires a pandas DataFrame.")
+    if table.empty:
+        raise ValueError("Strategy comparison requires at least one strategy and metric.")
+    if isinstance(table.columns, pd.MultiIndex) or not table.columns.is_unique:
+        raise ValueError("Metric columns must be unique, single-level names.")
+    if not table.index.is_unique or any(not isinstance(name, str) or not name.strip() for name in table.index):
+        raise ValueError("Strategy labels must be unique, nonempty strings.")
+    reserved = {
+        "data_source", "research_mode", "scenario", "benchmark_name",
+        "evaluation_start", "evaluation_end", "strategy",
+    }
+    collisions = reserved.intersection(table.columns)
+    if collisions:
+        raise ValueError("Metric columns conflict with reserved export fields: " + ", ".join(sorted(collisions)) + ".")
+    labels = {}
+    for key, value in (("data_source", data_source), ("scenario", scenario), ("benchmark_name", benchmark_name)):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{key} must be an explicit, nonempty label.")
+        labels[key] = value.strip()
+    source = labels["data_source"]
+    if "synthetic" in source.lower() or "demo" in source.lower():
+        source = "SYNTHETIC DEMONSTRATION — NOT HISTORICAL MARKET PERFORMANCE"
+    start = _timestamp(evaluation_start) if evaluation_start is not None else None
+    end = _timestamp(evaluation_end) if evaluation_end is not None else None
+    if start is not None and end is not None and start > end:
+        raise ValueError("Evaluation start must be on or before evaluation end.")
+    result = table.copy()
+    metadata = {
+        "data_source": source,
+        "research_mode": "Retrospective research — full evaluation window",
+        "scenario": labels["scenario"],
+        "benchmark_name": labels["benchmark_name"],
+        "evaluation_start": start.strftime("%Y-%m-%d") if start is not None else "",
+        "evaluation_end": end.strftime("%Y-%m-%d") if end is not None else "",
+    }
+    result.insert(0, "strategy", table.index.to_list())
+    for key, value in reversed(tuple(metadata.items())):
+        result.insert(0, key, value)
+    return result.to_csv(index=False, lineterminator="\n")
+
+
 def build_csv_report(
     history: pd.DataFrame,
     trades: pd.DataFrame | None = None,
@@ -229,11 +289,15 @@ def build_html_report(
     event_frame = pd.DataFrame(events) if events is not None else None
     comparison = ""
     if reference is not None:
-        comparison = f"<p>Your portfolio finished at ${actual['final_value']:,.2f}, compared with ${reference.iloc[-1]:,.2f} for the benchmark. This comparison uses matching elapsed windows.</p>"
+        benchmark_name=escape(str(public.get("benchmark_name","selected benchmark")))
+        verb="finished" if completed else "stands"
+        comparison = f"<p>Your portfolio {verb} at ${actual['final_value']:,.2f}, compared with ${reference.iloc[-1]:,.2f} for <strong>{benchmark_name}</strong>. This comparison uses matching elapsed windows.</p>"
     headline = "DID YOUR PORTFOLIO SURVIVE THE CRISIS?" if completed else "INTERIM PERFORMANCE — SESSION IN PROGRESS"
     score_html = ""
     if completed:
         component_frame = pd.DataFrame({"component_score_0_to_100": points["components"], "weight": points["weights"]})
+        component_frame["component_score_0_to_100"]=component_frame["component_score_0_to_100"].map(lambda value:f"{value:.1f}")
+        component_frame["weight"]=component_frame["weight"].map(lambda value:f"{value:.0%}")
         score_html = f"<h2>Educational survival score: {points['score']:.1f}/100</h2><p>{escape(points['category'])}. {escape(points['label'])}</p>{_table(component_frame)}<p>Preservation 35%: clip(1 + total return, 0, 1). Drawdown 35%: clip(1 − maximum drawdown / 0.60, 0, 1). Risk-adjusted 15%: clip((Sharpe + 1) / 3, 0, 1). Relative 15%: clip(0.5 + excess cumulative return / 0.40, 0, 1). Multiply components by 100 before weighting. Missing components receive neutral 50%; weights are not redistributed. Growth above capital preservation is deliberately capped. Thresholds: excellent ≥85, strong ≥70, moderate ≥50, severe damage ≥25, collapse &lt;25.</p>"
     history_table = revealed.copy()
     if reference is not None:

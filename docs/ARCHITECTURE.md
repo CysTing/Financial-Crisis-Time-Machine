@@ -17,6 +17,8 @@ flowchart LR
     R --> X[Restricted CSV / HTML reports]
     E --> L[Retrospective Laboratory results]
     R --> M[Metrics and reconciliation]
+    R --> O[Pure pulse and debrief observations]
+    O --> U
 ```
 
 ## Boundaries
@@ -28,6 +30,8 @@ receives one fixed eligible universe and an explicit scenario interval. Every
 scenario session must have a positive finite close for each eligible asset. Missing
 observations fail validation; no prices are forward- or backward-filled. Missing
 warm-up observations remain missing and prevent indicator eligibility.
+Exchange calendars are requested for an explicit bounded scenario window rather
+than relying on the calendar library's date-relative default range.
 
 `core/strategies.py` contains six stateless allocation rules. Each decision receives
 only a copied price frame through the signal date. The replay clock and holdings
@@ -50,6 +54,13 @@ and conservative disclosure rules are retained with curated factual events.
 also enforce their cutoff independently. Full-period Crisis Analysis and the final
 score are gated until the replay is complete. Interim downloads describe only the
 matching elapsed period.
+
+`core/experience.py` is a pure calculation layer over revealed account history.
+It derives the strongest newly processed daily move and a drawdown/cash/cost
+debrief. It restricts observations before calculation and never fetches prices,
+generates historical news, chooses an allocation, or changes the clock.
+`ui/components.py` formats those dictionaries and applies optional bounded CSS
+motion; financial values remain readable with motion disabled.
 
 ## One session, in order
 
@@ -108,6 +119,19 @@ snapshot or rerendering a page cannot execute a trade or advance time. Advancing
 the already-current date is a no-op. Reset constructs a fresh engine and clears
 dependent replay state.
 
+Mission initialization stores a reviewed configuration. A change to scenario,
+source, capital, costs, strategy, or allocation invalidates that preflight, so a
+launch cannot silently use earlier settings. Persistent draft widgets retain
+unfinished target weights across page changes; a fresh mission clears them.
+Separate widget keys keep momentum and inverse-volatility lookbacks independent.
+
+Journal entries are explicitly dated UI session records. Allocation notes reference
+the pending order identifier; observations without trades have no order identifier.
+`survival_view()` merges them into a copy of the engine's decision log for display
+and restricted export. The engine's holdings, cash, signals, and numerical results
+do not depend on free text. Replay state, drafts, journal notes, and pulse state
+are isolated per browser session and are not persisted in the market-data cache.
+
 Only one target is pending for the next execution close. A manual target replaces
 the pending initial/automatic/manual target and logs that replacement. Cancellation
 is possible before execution. Automatic strategies resume their documented signal
@@ -128,3 +152,10 @@ They test full-allocation costs, cash reconciliation, intermediate sessions,
 signal/execution alignment, future-price mutation, cancellation at scenario end,
 state isolation, and restricted snapshots. Provider integration and actual browser
 checks are separate from offline unit tests.
+
+Survival users may select the eligible SPY or monthly 60/40 comparison benchmark
+without moving the clock or trading. Reports name that benchmark explicitly and
+use its matching revealed index. Laboratory keeps requested inputs distinct from
+saved-run provenance; chart filters only affect presentation. Exact duplicate
+equity paths may be hidden initially, while all completed strategy results remain
+available in the comparison table and exports.

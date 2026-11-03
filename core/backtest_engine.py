@@ -97,7 +97,10 @@ class Simulation:
         if sessions is None:
             import exchange_calendars as xcals
 
-            sessions = xcals.get_calendar("XNYS").sessions_in_range(start, end)
+            # Explicit bounds keep a historical replay independent of the host's
+            # current date and the calendar library's rolling default window.
+            calendar = xcals.get_calendar("XNYS", start=start-pd.Timedelta(days=8), end=end+pd.Timedelta(days=8))
+            sessions = calendar.sessions_in_range(start, end)
         sessions = _naive_dates(sessions)
         self._sessions = sessions[(sessions >= start) & (sessions <= end)]
         if self._sessions.empty or self._sessions.duplicated().any() or not self._sessions.is_monotonic_increasing:

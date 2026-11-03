@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 from streamlit.testing.v1 import AppTest
+from core.metrics import performance_metrics
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
 
@@ -124,3 +125,23 @@ def test_completed_crisis_analysis_and_final_report_render():
     _assert_clean(app)
     assert any("DID YOUR PORTFOLIO SURVIVE" in element.value for element in app.subheader)
     assert len(app.get("download_button")) == 4
+
+
+def test_report_benchmark_selection_changes_comparison_without_advancing():
+    app=_mission()
+    simulation=app.session_state["survival"]
+    simulation.advance("week")
+    clock=simulation.current_date
+    for name in ("SPY buy & hold","60/40 monthly"):
+        app.session_state["survival_benchmark_choice"]=name
+        app.radio(key="page").set_value("Final Performance Report").run()
+        _assert_clean(app)
+        assert any(element.label==f"Benchmark · {name}" for element in app.metric)
+        benchmark=app.session_state["benchmarks"][name]
+        assert benchmark.current_date==clock
+        assert benchmark.history.index.equals(simulation.history.index)
+        expected=performance_metrics(simulation.history.equity,benchmark.history.equity,simulation.ledger)["excess_return"]
+        details=next(element.value for element in app.dataframe if {"Metric","Value"}.issubset(element.value.columns))
+        actual=details.set_index("Metric").loc["Excess cumulative return","Value"]
+        assert actual==f"{expected*100:+.2f} pp"
+        assert simulation.current_date==clock

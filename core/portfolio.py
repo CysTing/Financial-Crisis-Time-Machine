@@ -14,12 +14,16 @@ def validate_weights(weights: Mapping[str, float], assets: list[str]) -> dict[st
     """Require finite, nonnegative weights summing to one (absolute tolerance 1e-8)."""
     if not weights:
         raise ValueError("Allocation is empty; explicitly assign 100% to CASH if desired.")
-    unknown = set(weights) - set(assets) - {"CASH"}
-    if unknown:
-        raise ValueError(f"Assets unavailable in this run: {', '.join(sorted(unknown))}.")
     converted = {str(k): float(v) for k, v in weights.items()}
     if any(not np.isfinite(v) or v < 0 for v in converted.values()):
         raise ValueError("Weights must be finite and nonnegative; leverage and shorts are disabled.")
+    # Allocation editors may retain a zero-valued row for an excluded asset.
+    # Zero is no exposure, so discard only exactly-zero unavailable names. Even
+    # a tiny positive unknown weight remains invalid, rather than being rounded
+    # away or silently transferred to the eligible universe.
+    unknown = {asset for asset in set(converted) - set(assets) - {"CASH"} if converted[asset] != 0.0}
+    if unknown:
+        raise ValueError(f"Assets unavailable in this run: {', '.join(sorted(unknown))}.")
     total = sum(converted.values())
     if abs(total - 1.0) > WEIGHT_TOLERANCE:
         raise ValueError(f"Weights must sum to 100% (received {total:.6%}).")

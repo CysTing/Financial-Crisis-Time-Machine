@@ -9,6 +9,18 @@ from core.portfolio import Portfolio, validate_weights
 from core.strategies import make_strategy
 
 
+def test_old_valid_window_uses_requested_calendar_bounds_not_today():
+    # These SPY dates are after inception but before the library's rolling
+    # default calendar window. Historical replay must remain usable as time passes.
+    dates=pd.DatetimeIndex(["2000-01-03","2000-01-04","2000-01-05"])
+    prices=pd.DataFrame({"SPY":[100.,110.,121.]},index=dates)
+    sim=Simulation(prices,dates[0],dates[-1],capital=100,cost_bps=0,weights={"SPY":1.0})
+    result=sim.run()
+    assert result.history.index.equals(dates)
+    assert result.history.equity.tolist()==pytest.approx([100,100,110])
+    assert result.ledger.execution_date.tolist()==[dates[1]]
+
+
 def replay(values, **kwargs):
     prices = pd.DataFrame(values, index=pd.bdate_range("2020-01-02", periods=len(next(iter(values.values())))))
     return Simulation(prices, prices.index[0], prices.index[-1], sessions=prices.index, **kwargs)
@@ -88,6 +100,18 @@ def test_small_weight_rounding_tolerance_only():
     assert sum(validate_weights({"A": 1.000000001}, ["A"]).values()) == 1
     with pytest.raises(ValueError):
         validate_weights({"A": 1.00001}, ["A"])
+
+
+def test_exactly_zero_excluded_asset_is_ignored_without_creating_exposure():
+    weights = validate_weights({"SPY": .6, "AGG": .4, "EXCLUDED": 0.0}, ["SPY", "AGG"])
+    assert weights == {"SPY": .6, "AGG": .4, "CASH": 0.0}
+    assert "EXCLUDED" not in weights
+
+
+@pytest.mark.parametrize("weight", [1e-15, -.1, np.nan, np.inf])
+def test_unavailable_nonzero_or_nonfinite_weights_are_never_ignored(weight):
+    with pytest.raises(ValueError):
+        validate_weights({"SPY": 1.0, "EXCLUDED": weight}, ["SPY"])
 
 
 def test_week_advance_processes_all_five_sessions_and_pending_execution():

@@ -10,12 +10,14 @@ import streamlit as st
 from core.backtest_engine import Simulation
 from core.data_loader import DataError, load_market_data
 from core.event_timeline import visible_events
+from core.experience import market_pulse,report_debrief
 from core.metrics import performance_metrics, survival_score, covariance_risk_contributions
-from core.reporting import build_html_report, build_csv_report
+from core.reporting import build_html_report, build_csv_report, build_strategy_comparison_csv
 from core.scenarios import SCENARIOS
 from core.strategies import STRATEGIES, make_strategy
 from ui import charts
 from ui.styling import apply_theme
+from ui.components import render_market_pulse,render_debrief
 
 st.set_page_config(page_title="Financial Time Machine", page_icon="◷", layout="wide")
 apply_theme()
@@ -24,7 +26,7 @@ SOURCES = ["Historical adjusted prices", "Synthetic offline demonstration"]
 ROOT = Path(__file__).resolve().parent
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=12, show_spinner=False)
 def market_data(scenario_key: str, source: str, refresh: int = 0):
     scenario = SCENARIOS[scenario_key]
     return load_market_data(scenario.start, scenario.end, source=source,
@@ -49,27 +51,118 @@ def load_current_allocation() -> None:
         st.session_state[f"order_target_{row.asset}"]=float(row.weight*100)
 
 
+def survival_view(sim) -> dict:
+    """Attach the user's dated reasoning to the engine's copied safe view."""
+    view=sim.snapshot()
+    entries=st.session_state.get("survival_journal",[])
+    if not entries:
+        return view
+    decisions=view["decisions"].copy()
+    notes={entry["order_id"]:entry["rationale"] for entry in entries if entry.get("order_id") is not None}
+    decisions["rationale"]=decisions["order_id"].map(notes).fillna("")
+    observations=[dict(order_id=None,signal_date=entry["signal_date"],execution_date=pd.NaT,
+        source="journal",status="observation",rationale=entry["rationale"],weights=None)
+        for entry in entries if entry.get("order_id") is None]
+    if observations:
+        decisions=pd.concat([decisions,pd.DataFrame(observations)],ignore_index=True).sort_values("signal_date",kind="stable")
+    view["decisions"]=decisions
+    return view
+
+
+def save_reason(sim,order_id=None) -> None:
+    note=st.session_state.get("order_rationale","").strip()
+    if note:
+        st.session_state.setdefault("survival_journal",[]).append(dict(order_id=order_id,signal_date=sim.current_date,rationale=note))
+        st.session_state.order_rationale=""
+
+
+def queue_manual_target(kind: str) -> None:
+    """Callbacks validate before mutation and update the screen in a single rerun."""
+    sim=st.session_state.survival
+    view=sim.snapshot()
+    try:
+        if kind=="draft":
+            target={a:st.session_state.get(f"order_target_{a}",0.)/100 for a in [*sim.assets,"CASH"]}
+        elif kind=="cash":
+            target={"CASH":1.0}
+        else:
+            asset=st.session_state.ticket_asset
+            action=st.session_state.ticket_side
+            amount=st.session_state.ticket_amount
+            current=view["history"].iloc[-1]
+            if amount<=0:
+                raise ValueError("Enter an amount greater than zero. Your pending order has not changed.")
+            available=float(current.cash) if action=="Buy" else float(current.get(f"value_{asset}",0))
+            if amount>available+1e-8:
+                raise ValueError(f"{action} target is USD {amount:,.2f}; available {'cash' if action=='Buy' else asset+' position'} is USD {available:,.2f}. Reduce the amount or use the allocation desk to fund changes across assets.")
+            target=dict(zip(view["holdings"].asset,view["holdings"].weight))
+            change=amount/current.equity*(1 if action=="Buy" else -1)
+            target[asset]+=change
+            target["CASH"]-=change
+        status=sim.submit_target(target,source="manual")
+        save_reason(sim,sim.pending.order_id if sim.pending else None)
+        st.session_state.notice=f"{status} Holdings change at execution; both buys and sells incur costs."
+    except ValueError as exc:
+        st.session_state.order_error=str(exc)
+
+
+def save_observation() -> None:
+    if not st.session_state.get("order_rationale","").strip():
+        st.session_state.order_error="Write a short observation before saving it. Your allocation is unchanged."
+        return
+    save_reason(st.session_state.survival)
+    st.session_state.notice="Observation saved at this historical close. Your pending order and holdings are unchanged."
+
+
+def cancel_order() -> None:
+    st.session_state.survival.cancel_pending()
+    st.session_state.notice="Pending target cancelled. No trade was executed."
+
+
+def advance_replay(step: str) -> None:
+    sim=st.session_state.survival
+    previous=sim.current_date
+    sim.advance(step)
+    st.session_state.survival_pulse=market_pulse(sim.history,previous,current_date=sim.current_date)
+    st.session_state.survival_pulse_seen=False
+
+
 def fmt(value, kind="percent") -> str:
     if value is None or pd.isna(value):
         return "N/A"
     return f"{value:.2%}" if kind == "percent" else f"{value:,.2f}"
 
 
+def money(value: float) -> str:
+    """Keep compact KPI cards legible; exact amounts remain in their help text."""
+    if abs(value)>=1e9:
+        return f"${value/1e9:,.2f}B"
+    if abs(value)>=1e6:
+        return f"${value/1e6:,.2f}M"
+    return f"${value:,.2f}"
+
+
 def source_banner(synthetic: bool, provider: str = "Yahoo Finance via yfinance") -> None:
     if synthetic:
-        st.warning("SYNTHETIC DEMONSTRATION · Deterministic invented prices. These are not historical market results. Events remain factual historical context.")
+        st.warning("SYNTHETIC DEMONSTRATION · Fictional prices, not historical market results. Events are factual.")
     else:
         st.caption(f"HISTORICAL REPLAY · {provider} · Adjusted-close total-return approximation · USD")
 
 
-def weights_editor(assets, key: str, defaults=None) -> dict[str, float]:
+def weights_editor(assets, key: str, defaults=None, persistent: bool=False) -> dict[str, float]:
     defaults = defaults or {"SPY": 1.0}
     columns = st.columns(4)
     weights = {}
     for i, asset in enumerate([*assets, "CASH"]):
         with columns[i % 4]:
-            weights[asset] = st.number_input(f"{asset} %", min_value=0.0, max_value=100.0,
-                value=float(defaults.get(asset, 0.0) * 100), step=5.0, key=f"{key}_{asset}") / 100
+            widget_key=f"{key}_{asset}"
+            options=dict(min_value=0.0,max_value=100.0,step=5.0,key=widget_key)
+            if persistent:
+                st.session_state.setdefault(widget_key,float(defaults.get(asset,0.0)*100))
+                options["persist_state"]="session"
+            else:
+                options["value"]=float(defaults.get(asset,0.0)*100)
+            weights[asset] = st.number_input(f"{asset} %",**options) / 100
     total = sum(weights.values())
     st.caption(f"Target total: {total:.2%} · Must equal 100% · Fractional synthetic total-return units")
     return weights
@@ -96,7 +189,7 @@ def strategy_controls(key: str, assets=None):
             frequency = st.selectbox("Rebalance frequency", ["None", "Monthly", "Quarterly", "Annually"], index=1, key=f"{key}_frequency")
     if name in ("Momentum Rotation", "Inverse Volatility"):
         lookback = st.number_input("Trailing observations (sessions)", min_value=2, max_value=252,
-            value=126 if name == "Momentum Rotation" else 63, key=f"{key}_lookback")
+            value=126 if name == "Momentum Rotation" else 63, key=f"{key}_{'momentum' if name=='Momentum Rotation' else 'volatility'}_lookback")
     if name == "Inverse Volatility":
         cap = st.slider("Maximum weight per asset", .1, 1.0, 1.0, .05, key=f"{key}_cap")
     strategy = make_strategy(name, weights=weights, frequency=frequency, lookback=lookback, exposure_cap=cap)
@@ -128,13 +221,20 @@ def benchmarks_for(data, scenario, capital, cost):
 def launch_ready_mission() -> None:
     """A callback changes navigation before widgets render, including in AppTest."""
     key,data,strategy,capital,cost=st.session_state.survival_ready
+    for state_key in list(st.session_state):
+        if state_key.startswith(("order_","ticket_")) or state_key=="notice":
+            del st.session_state[state_key]
     scenario=SCENARIOS[key]
     st.session_state.survival = Simulation(data.prices,scenario.start,scenario.end,capital,cost,
         strategy=strategy,data_fingerprint=data.fingerprint)
     st.session_state.survival_meta = dict(scenario_key=key,synthetic=data.synthetic,
         provider=data.manifest.get("provider","Unknown"),retrieved_at=data.manifest.get("retrieved_at_utc","Unknown"),strategy=strategy.description)
     st.session_state.benchmarks=benchmarks_for(data,scenario,capital,cost)
+    st.session_state.survival_journal=[]
+    st.session_state.survival_pulse=None
+    st.session_state.survival_pulse_seen=False
     st.session_state.pop("survival_ready",None)
+    st.session_state.pop("survival_ready_config",None)
     st.session_state.page="Financial Time Machine"
 
 
@@ -147,14 +247,34 @@ def reveal_benchmarks(sim):
     return result
 
 
-def metrics_panel(history, benchmark=None, trades=None):
-    metrics = performance_metrics(history.equity, benchmark=benchmark, trades=trades)
+def selected_benchmark(benchmarks):
+    name=st.session_state.get("survival_benchmark_choice")
+    if name not in benchmarks:
+        name=next(iter(benchmarks),None)
+    return name,benchmarks.get(name) if name is not None else None
+
+
+def show_chart(figure, *, container=None, width="stretch") -> None:
+    """All plot exports carry the same explicit source as their displayed run."""
+    if st.session_state.page=="Strategy Laboratory":
+        synthetic=st.session_state.lab_result["synthetic"]
+    else:
+        synthetic=st.session_state.survival_meta["synthetic"]
+    target=container if container is not None else st
+    target.plotly_chart(charts.with_source_label(figure,synthetic),width=width)
+
+
+def metrics_panel(history, benchmark=None, trades=None, confidence=.95):
+    metrics = performance_metrics(history.equity, benchmark=benchmark, trades=trades,confidence=confidence)
     columns = st.columns(4)
-    for col, label, key, kind in zip(columns,
-        ["Total return", "Maximum drawdown", "Sharpe · 0% RF", "Annualized volatility"],
+    for col, label, key, kind, explanation in zip(columns,
+        ["Total return", "Maximum drawdown", "Sharpe ratio", "Annualized volatility"],
         ["total_return", "max_drawdown", "sharpe", "annualized_volatility"],
-        ["percent", "percent", "number", "percent"]):
-        col.metric(label, fmt(metrics.get(key), kind))
+        ["percent", "percent", "number", "percent"],
+        ["Cumulative portfolio return after execution costs.","Largest loss below a previous portfolio peak, including initial capital.",
+         "Mean daily excess return / sample standard deviation × sqrt(252). Risk-free assumption: 0% annual.",
+         "Sample standard deviation of daily returns × sqrt(252)."]):
+        col.metric(label, fmt(metrics.get(key), kind),help=explanation)
     return metrics
 
 
@@ -171,7 +291,8 @@ def mission():
     st.html('<div class="hero"><div class="eyebrow">RESEARCH THROUGH REPLAY / EST. 2007</div>'
         '<h1>Time is your<br><span class="accent">greatest risk.</span></h1>'
         '<p>Step into history with $100,000. Build a portfolio, make your decisions, and discover whether your strategy survives the next crisis.</p>'
-        '<span class="stamp">CAUSAL EXECUTION</span> &nbsp; <span class="stamp">7 ASSETS + CASH</span> &nbsp; <span class="stamp">NO LEVERAGE</span></div>')
+        '<span class="stamp">CAUSAL EXECUTION</span> &nbsp; <span class="stamp">7 ASSETS + CASH</span> &nbsp; <span class="stamp">NO LEVERAGE</span>'
+        '<br><a class="mission-anchor" href="#configure-your-mission">Configure your mission ↓</a></div>')
     st.subheader("Choose your point of entry")
     for col, scenario in zip(st.columns(3), SCENARIOS.values()):
         with col, st.container(border=True,height="stretch"):
@@ -189,14 +310,21 @@ def mission():
         capital = a.number_input("Initial capital (USD)", min_value=1000., max_value=1e9, value=100000., step=10000.)
         cost = b.number_input("Cost per side (basis points)", min_value=0., max_value=100., value=5., step=1.)
         strategy = strategy_controls("mission")
+        configuration=(key,source,float(capital),float(cost),repr(strategy))
+        if "survival_ready" in st.session_state and st.session_state.get("survival_ready_config")!=configuration:
+            st.session_state.pop("survival_ready",None)
+            st.session_state.pop("survival_ready_config",None)
+            st.info("Mission settings changed. Initialize again to validate the updated configuration.")
         st.caption("Changing mission settings takes effect only when you start a fresh session.")
         if st.button("Initialize mission →", type="primary", width="stretch"):
             st.session_state.pop("survival_ready",None)
+            st.session_state.pop("survival_ready_config",None)
             try:
                 with st.spinner("Validating calendar, prices, and eligible assets…"):
                     data = market_data(key, "synthetic" if source == SOURCES[1] else "historical", st.session_state.get("data_refresh",0))
                     strategy.validate_universe(list(data.eligible))
                     st.session_state.survival_ready = (key,data,strategy,capital,cost)
+                    st.session_state.survival_ready_config=configuration
             except (DataError,ValueError,OSError) as exc:
                 st.error(str(exc))
                 st.info("Retry genuine data, or explicitly select the Synthetic offline demonstration above. No synthetic prices are substituted automatically.")
@@ -208,6 +336,8 @@ def mission():
         if "survival_ready" in st.session_state:
             key,data,strategy,capital,cost = st.session_state.survival_ready
             st.success("Preflight validated. Review the eligible universe before launching.")
+            st.markdown(f"**{SCENARIOS[key].name}** · USD {capital:,.0f} · {cost:g} bps per side")
+            st.caption(f"{strategy.name} · {source}. {strategy.description}")
             st.write("Eligible: " + ", ".join(data.eligible) + " + CASH")
             if data.exclusions:
                 st.warning("Excluded: " + "; ".join(f"{a}: {why}" for a,why in data.exclusions.items()))
@@ -215,6 +345,11 @@ def mission():
             warnings=data.manifest.get("validation_warnings",[])
             if warnings:
                 st.warning(f"{len(warnings)} validation notice(s) recorded. Dated diagnostics remain private until completion; exclusions above are fixed before launch.")
+            if data.manifest.get("cache_used"):
+                st.info(f"Using a validated genuine local cache, originally retrieved {data.manifest.get('retrieved_at_utc','at the recorded retrieval date')}. No invented prices were substituted.")
+            if strategy.name in ("Moving Average Trend","Momentum Rotation","Inverse Volatility"):
+                required=strategy.lookback+(0 if strategy.name=="Moving Average Trend" else 1)
+                st.caption(f"Indicator warm-up requires {required} trailing closes. The first decision uses only observations available at the first scenario close; insufficient history stays in cash.")
             st.button("Launch validated mission →",type="primary",width="stretch",on_click=launch_ready_mission)
     with right:
         st.subheader("The rules of time travel")
@@ -230,24 +365,30 @@ def mission():
 
 def replay():
     sim = session_required()
-    view = sim.snapshot()
+    view = survival_view(sim)
     meta = st.session_state.survival_meta
     source_banner(meta["synthetic"],meta["provider"])
-    st.caption("SURVIVAL MODE / INFORMATION AS OF THE CURRENT CLOSE")
+    st.caption("SURVIVAL / REVEALED DATA ONLY")
     st.title(sim.current_date.strftime("%d %B %Y"))
+    scenario=SCENARIOS[meta["scenario_key"]]
+    st.caption(f"{scenario.name} · Observed closes: {len(view['history']):,} · USD {sim.capital:,.0f} starting capital")
     bench = reveal_benchmarks(sim)
-    primary = next(iter(bench.values()),None)
+    benchmark_name,primary = selected_benchmark(bench)
+    if benchmark_name:
+        st.caption(f"Benchmark: {benchmark_name} · Same dates, capital, and costs")
     history = view["history"]
     current = history.iloc[-1]
     a,b,c,d = st.columns(4)
-    a.metric("Portfolio value",f"${current.equity:,.2f}",f"{current.equity-sim.capital:+,.2f} USD")
-    b.metric("Available cash",f"${current.cash:,.2f}")
+    a.metric("Portfolio value",money(current.equity),f"{current.equity-sim.capital:+,.2f} USD",help=f"Exact portfolio value: USD {current.equity:,.2f}")
+    b.metric("Available cash",money(current.cash),help=f"Exact cash balance: USD {current.cash:,.2f}")
     c.metric("Return to date",fmt(current.equity/sim.capital-1))
     m=performance_metrics(history.equity,benchmark=primary,trades=view["ledger"])
     d.metric("Maximum drawdown",fmt(m.get("max_drawdown")))
     st.caption("Adjusted close units · Costs included · Cash interest 0% · Risk-free assumption 0% · No external cash flows")
     if st.session_state.get("notice"):
         st.success(st.session_state.pop("notice"))
+    if st.session_state.get("order_error"):
+        st.error(st.session_state.pop("order_error"))
     if sim.complete:
         st.success("Replay complete. Crisis Analysis and the final survival report are unlocked.")
         st.button("Open final performance report →",on_click=go,args=("Final Performance Report",))
@@ -255,11 +396,13 @@ def replay():
         columns=st.columns(3)
         for col,step,label in zip(columns,["day","week","month"],["Next trading day","Next 5 sessions","Next month-end"]):
             destination=sim.destination(step)
-            if col.button(f"{label} → {destination:%d %b %Y}",width="stretch",key=f"advance_{step}"):
-                sim.advance(step)
-                st.rerun()
+            col.button(f"{label} → {destination:%d %b %Y}",width="stretch",key=f"advance_{step}",on_click=advance_replay,args=(step,))
+    pulse=st.session_state.get("survival_pulse")
+    if pulse:
+        render_market_pulse(pulse,animate=st.session_state.get("motion_enabled",True) and not st.session_state.get("survival_pulse_seen",False))
+        st.session_state.survival_pulse_seen=True
     events=visible_events(sim.current_date,start=history.index.min())
-    st.plotly_chart(charts.equity_chart({"Your portfolio":history.equity,**bench},events),width="stretch")
+    show_chart(charts.equity_chart({"Your portfolio":history.equity,**bench},events),width="stretch")
     left,right=st.columns([1.7,1],gap="large")
     with left:
         st.subheader("Allocation desk")
@@ -267,47 +410,26 @@ def replay():
         pending=view.get("pending")
         if pending:
             st.info(f"Pending {pending['source']} target · Signal {pd.Timestamp(pending['signal_date']):%Y-%m-%d} · Execution {pd.Timestamp(pending['execution_date']):%Y-%m-%d}. A manual order replaces this target.")
-            st.write({a:f"{w:.1%}" for a,w in pending["weights"].items() if w>0})
-            if st.button("Cancel pending target",disabled=sim.complete):
-                sim.cancel_pending()
-                st.rerun()
+            st.caption("Pending allocation: "+" · ".join(f"{a} {w:.1%}" for a,w in pending["weights"].items() if w>0))
+            st.button("Cancel pending target",disabled=sim.complete,on_click=cancel_order)
         if not sim.complete:
             st.caption("Allocation inputs are a persistent draft. Review the weights before queuing a replacement.")
             st.button("Load current allocation into draft",on_click=load_current_allocation)
             defaults = pending["weights"] if pending else dict(zip(view["holdings"].asset,view["holdings"].weight))
             if not pending:
                 defaults["CASH"]=float(current.weight_CASH)
-            with st.form("allocation_order"):
-                weights=weights_editor(sim.assets,"order_target",defaults)
-                submitted=st.form_submit_button("Queue target for next close",type="primary")
-            if submitted:
-                try:
-                    sim.submit_target(weights,source="manual")
-                    st.session_state.notice="Manual target queued. Any previous pending target was replaced; holdings change only at execution."
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
+            with st.container(border=True):
+                weights=weights_editor(sim.assets,"order_target",defaults,persistent=True)
+                st.text_area("Decision journal · why this allocation?",placeholder="Optional: capture your reasoning before the next close reveals the outcome.",max_chars=500,key="order_rationale",persist_state="session",height=90)
+                st.button("Queue target for next close",type="primary",on_click=queue_manual_target,args=("draft",))
+                st.button("Save observation without trading",on_click=save_observation)
             with st.expander("Buy / sell a single asset"):
                 st.caption("The ticket adjusts a target weight using current equity. Units are sized at the next close; the final traded notional may differ.")
                 asset=st.selectbox("Asset",sim.assets,key="ticket_asset")
                 action=st.radio("Side",["Buy","Sell"],horizontal=True,key="ticket_side")
                 amount=st.number_input("Target change (USD at current equity)",min_value=0.,value=1000.,step=100.,key="ticket_amount")
-                if st.button("Queue single-asset target"):
-                    target=dict(zip(view["holdings"].asset,view["holdings"].weight))
-                    target["CASH"]=float(current.weight_CASH)
-                    change=amount/current.equity*(1 if action=="Buy" else -1)
-                    target[asset]=target.get(asset,0)+change
-                    target["CASH"]-=change
-                    try:
-                        sim.submit_target(target,source="manual")
-                        st.session_state.notice="Single-asset target queued for the next close. Previous pending target replaced."
-                        st.rerun()
-                    except ValueError as exc:
-                        st.error(str(exc))
-            if st.button("Queue 100% cash"):
-                sim.submit_target({"CASH":1.0},source="manual")
-                st.session_state.notice="Cash target queued for next close. Sales incur costs."
-                st.rerun()
+                st.button("Queue single-asset target",on_click=queue_manual_target,args=("ticket",))
+            st.button("Queue 100% cash",on_click=queue_manual_target,args=("cash",))
         holdings=view["holdings"].copy()
         holdings["weight"]*=100
         st.dataframe(holdings,hide_index=True,width="stretch",column_config={
@@ -320,13 +442,13 @@ def replay():
             st.dataframe(history[weight_cols].tail(15),width="stretch")
             st.dataframe(view["decisions"],width="stretch",hide_index=True)
     with right:
-        st.plotly_chart(charts.allocation_chart({a:float(current.get(f"weight_{a}",0)) for a in [*sim.assets,"CASH"]}),width="stretch")
+        show_chart(charts.allocation_chart({a:float(current.get(f"weight_{a}",0)) for a in [*sim.assets,"CASH"]}),width="stretch")
         st.subheader("Dispatches from history")
         event_feed(events)
     with st.expander("Revealed asset prices · normalized to 100 at first available observation"):
         prices=view["prices"]
         normalized=prices.apply(lambda column: column / column.dropna().iloc[0] * 100 if column.notna().any() else column)
-        st.plotly_chart(charts.equity_chart({a:normalized[a].dropna() for a in prices},normalized=True,current_date=sim.current_date),width="stretch")
+        show_chart(charts.equity_chart({a:normalized[a].dropna() for a in prices},normalized=True,current_date=sim.current_date),width="stretch")
     with st.expander("Execution ledger"):
         st.dataframe(view["ledger"],hide_index=True,width="stretch")
 
@@ -337,12 +459,13 @@ def laboratory():
     st.write("Compare systematic rules over the same evaluation window, capital, execution delay, and costs.")
     key=st.selectbox("Research scenario",list(SCENARIOS),format_func=lambda k:SCENARIOS[k].name,key="lab_scenario")
     source=st.radio("Research data",SOURCES,key="lab_source")
-    source_banner(source==SOURCES[1])
+    st.caption(f"Requested data: {source}. Saved results below retain the source used when they were run.")
     a,b=st.columns(2)
     capital=a.number_input("Research capital (USD)",min_value=1000.,value=100000.,key="lab_capital")
     cost=b.number_input("Research cost per side (bps)",min_value=0.,max_value=100.,value=5.,key="lab_cost")
     chosen=st.multiselect("Strategies to compare",STRATEGIES,default=list(STRATEGIES),key="lab_chosen")
     with st.expander("Custom allocation and rebalancing",expanded=False):
+        st.caption("These weights apply to both Buy and Hold and User-Defined Allocation. The other four rules determine their own targets.")
         weights=weights_editor(["SPY","QQQ","AGG","IEF","TLT","GLD","SHY"],"lab_weights",{"SPY":.6,"AGG":.4})
         frequency=st.selectbox("Custom rebalance frequency",["None","Monthly","Quarterly","Annually"],index=1,key="lab_frequency")
     a,b,c=st.columns(3)
@@ -368,13 +491,17 @@ def laboratory():
                 benchmarks=benchmarks_for(data,scenario,capital,cost)
                 benchmark_results={name:sim.run() for name,sim in benchmarks.items()}
                 st.session_state.lab_result=dict(results=results,benchmarks=benchmark_results,synthetic=data.synthetic,
-                    exclusions=exclusions,scenario=key,manifest=data.manifest)
+                    exclusions=exclusions,scenario=key,manifest=data.manifest,weights=weights,capital=capital,cost=cost,frequency=frequency)
         except (ValueError,DataError,OSError) as exc:
             st.error(str(exc))
     if "lab_result" in st.session_state:
         saved=st.session_state.lab_result
         source_banner(saved["synthetic"])
         st.caption(f"Displayed run: {SCENARIOS[saved['scenario']].name}. Input changes take effect after Run comparative research.")
+        if "weights" in saved:
+            st.caption("Buy-and-hold / custom starting target: "+" · ".join(f"{a} {w:.1%}" for a,w in saved["weights"].items() if w>0)+f" · Cost {saved.get('cost',5):g} bps per side")
+        else:
+            st.caption("Rerun research to record the allocation and cost summary for this earlier saved result.")
         for name,why in saved["exclusions"].items():
             st.warning(f"{name} excluded: {why}")
         if not saved["results"]:
@@ -382,7 +509,28 @@ def laboratory():
             return
         all_equities={name:result.history.equity for name,result in saved["results"].items()}
         all_equities.update({f"Benchmark · {name}":result.history.equity for name,result in saved["benchmarks"].items()})
-        st.plotly_chart(charts.equity_chart(all_equities),width="stretch")
+        unique=[]
+        coincident=[]
+        for name,equity in all_equities.items():
+            match=next((previous for previous in unique if equity.equals(all_equities[previous])),None)
+            if match is None:
+                unique.append(name)
+            else:
+                coincident.append(f"{name} = {match}")
+        run_key=f"lab_chart_{saved['scenario']}_{len(saved['results'])}_{saved.get('cost',5)}"
+        visible_names=st.multiselect("Display on chart",list(all_equities),default=unique,key=run_key)
+        if not visible_names:
+            st.info("Choose one or more series to display. All strategy results remain in the comparison table.")
+        else:
+            comparison_figure=charts.equity_chart({name:all_equities[name] for name in visible_names})
+            labels={"Buy and Hold":"Buy & hold","Traditional 60/40":"60/40 monthly","Moving Average Trend":"Trend · 200D","Momentum Rotation":"Momentum","Inverse Volatility":"Inverse volatility","User-Defined Allocation":"Custom allocation","Benchmark · SPY buy & hold":"SPY benchmark","Benchmark · 60/40 monthly":"60/40 benchmark"}
+            for trace in comparison_figure.data:
+                full_name=trace.name
+                trace.name=labels.get(full_name,full_name)
+                trace.hovertemplate=f"%{{y:$,.2f}}<extra>{full_name}</extra>"
+            show_chart(comparison_figure,width="stretch")
+        if coincident:
+            st.caption("Identical curves are hidden initially to keep the chart readable; select them above to display. "+"; ".join(coincident))
         benchmark=next(iter(saved["benchmarks"].values()),None)
         rows={name:performance_metrics(result.history.equity,benchmark=benchmark.history.equity if benchmark else None,trades=result.ledger) for name,result in saved["results"].items()}
         table=pd.DataFrame(rows).T
@@ -400,21 +548,25 @@ def laboratory():
             "total_costs":st.column_config.NumberColumn("Costs (USD)",format="dollar"),
             "gross_turnover":st.column_config.NumberColumn("Turnover",format="%.2fx",help="Gross traded notional / average daily equity, including initial purchases."),
         })
-        st.caption("Net results over matching evaluation windows. Excess return is a percentage-point difference against the first eligible benchmark. Turnover includes initial purchases and both trade sides.")
+        research_benchmark=next(iter(saved["benchmarks"]),"No eligible benchmark")
+        st.caption(f"Net results over matching evaluation windows. Excess return is a percentage-point difference against {research_benchmark}. Turnover includes initial purchases and both trade sides.")
         with st.expander("Full metrics and assumptions"):
             from core.reporting import formatted_metric_table
             detail=st.selectbox("Detailed strategy",list(rows),key="lab_metric_detail")
             st.dataframe(formatted_metric_table(rows[detail]),hide_index=True,width="stretch",height=400,
                 column_config={"Metric":st.column_config.TextColumn(width="large"),"Value":st.column_config.TextColumn(width="medium")})
             st.caption("N/A means insufficient observations or an undefined ratio. CAGR and daily risk statistics can be unstable over short periods; 0% risk-free and minimum acceptable return assumptions are explicit.")
-        st.download_button("Download strategy comparison CSV",("SYNTHETIC DEMONSTRATION\n" if saved["synthetic"] else "HISTORICAL ADJUSTED PRICES\n")+table.to_csv(),"strategy-comparison.csv","text/csv")
+        evaluation=next(iter(saved["results"].values())).history.index
+        comparison_csv=build_strategy_comparison_csv(table,"synthetic" if saved["synthetic"] else "historical adjusted prices",
+            SCENARIOS[saved["scenario"]].name,research_benchmark,evaluation[0],evaluation[-1])
+        st.download_button("Download strategy comparison CSV",comparison_csv,"strategy-comparison.csv","text/csv")
         selection=st.selectbox("Inspect strategy",list(saved["results"]),key="lab_inspect")
         selected=saved["results"][selection]
         a,b=st.columns(2)
-        a.plotly_chart(charts.drawdown_chart(selected.history.equity),width="stretch")
-        b.plotly_chart(charts.volatility_chart(selected.history.equity),width="stretch")
-        st.plotly_chart(charts.trading_timeline(selected.ledger),width="stretch")
-        st.plotly_chart(charts.rolling_correlation_chart(selected.prices),width="stretch")
+        show_chart(charts.drawdown_chart(selected.history.equity),container=a,width="stretch")
+        show_chart(charts.volatility_chart(selected.history.equity),container=b,width="stretch")
+        show_chart(charts.trading_timeline(selected.ledger),width="stretch")
+        show_chart(charts.rolling_correlation_chart(selected.prices),width="stretch")
         with st.expander("Provenance and validation manifest"):
             st.json(saved["manifest"])
 
@@ -430,11 +582,11 @@ def crisis_analysis():
     history=view["history"]
     metrics_panel(history,trades=view["ledger"])
     a,b=st.columns(2)
-    a.plotly_chart(charts.drawdown_chart(history.equity),width="stretch")
-    b.plotly_chart(charts.volatility_chart(history.equity),width="stretch")
+    show_chart(charts.drawdown_chart(history.equity),container=a,width="stretch")
+    show_chart(charts.volatility_chart(history.equity),container=b,width="stretch")
     a,b=st.columns(2)
-    a.plotly_chart(charts.correlation_chart(view["prices"]),width="stretch")
-    b.plotly_chart(charts.distribution_chart(history.equity),width="stretch")
+    show_chart(charts.correlation_chart(view["prices"]),container=a,width="stretch")
+    show_chart(charts.distribution_chart(history.equity),container=b,width="stretch")
     st.subheader("Crisis window comparison")
     scenario=SCENARIOS[st.session_state.survival_meta["scenario_key"]]
     all_equities={"Your portfolio":history.equity,**reveal_benchmarks(sim)}
@@ -479,22 +631,53 @@ def crisis_analysis():
     st.caption("Empirical loss distribution; linear quantile and inclusive tail mean, at least 20 returns. A negative loss estimate describes sample gains. Estimates are not forecasts.")
     if len(prices.columns)>1:
         st.subheader("Rolling asset correlation")
-        st.plotly_chart(charts.rolling_correlation_chart(prices,window=63),width="stretch")
+        show_chart(charts.rolling_correlation_chart(prices,window=63),width="stretch")
 
 
 def report():
     sim=session_required()
-    view=sim.snapshot()
+    view=survival_view(sim)
     meta=st.session_state.survival_meta
     source_banner(meta["synthetic"],meta["provider"])
     st.title("Final Performance Report" if sim.complete else "Interim Performance Report")
     if not sim.complete:
         st.info(f"PARTIAL SESSION · Through {sim.current_date:%Y-%m-%d}. Final score and full-period analysis unlock at completion.")
     bench=reveal_benchmarks(sim)
-    primary=next(iter(bench.values()),None)
-    confidence=st.selectbox("Report tail-risk confidence",[.90,.95,.99],index=1,format_func=lambda value:f"{value:.0%}",key="report_confidence")
-    metrics=metrics_panel(view["history"],primary,view["ledger"])
+    benchmark_name,primary=selected_benchmark(bench)
+    final=view["history"].equity.iloc[-1]
+    st.subheader("Your crisis outcome" if sim.complete else "Your replay so far")
+    outcome,comparison=st.columns(2)
+    outcome.metric("Final portfolio value" if sim.complete else "Portfolio value to date",f"USD {final:,.2f}",
+        f"{final-sim.capital:+,.2f} USD net profit / loss")
+    if primary is not None:
+        comparison.metric(f"Benchmark · {benchmark_name}",f"USD {primary.iloc[-1]:,.2f}")
+        verb="finished" if sim.complete else "stands"
+        st.write(f"Your portfolio {verb} at **USD {final:,.2f}**, compared with **USD {primary.iloc[-1]:,.2f}** for **{benchmark_name}**" +
+            ("." if sim.complete else " over the matching partial window."))
+    st.caption(f"Retained {final/sim.capital:.2%} of initial capital. The educational score gives 35% weight to capital preservation and 35% to drawdown resilience; a high survival score does not by itself imply strong growth.")
+    with st.expander("Advanced report settings"):
+        confidence=st.selectbox("Report tail-risk confidence",[.90,.95,.99],index=1,format_func=lambda value:f"{value:.0%}",key="report_confidence")
+        st.caption("This changes the historical VaR and Expected Shortfall estimates. It does not change portfolio results or the survival score.")
     metrics=performance_metrics(view["history"].equity,benchmark=primary,trades=view["ledger"],confidence=confidence)
+    events=visible_events(sim.current_date,start=view["history"].index.min())
+    metadata={**view["config"],**meta,"data_source":"synthetic" if meta["synthetic"] else "historical adjusted prices",
+        "scenario":SCENARIOS[meta["scenario_key"]].name,"fingerprint":view["config"].get("data_fingerprint",""),
+        "cash_interest_annual":0,"risk_free_annual":0,"benchmark_name":benchmark_name}
+    html=build_html_report(view["history"],view["ledger"],metadata,metrics,events=events,
+        contributions=view["contributions"],benchmark=primary,current_date=sim.current_date,completed=sim.complete,
+        decisions=view["decisions"],confidence=confidence)
+    csv=build_csv_report(view["history"],view["ledger"],metadata,current_date=sim.current_date,completed=sim.complete,
+        benchmark=primary,decisions=view["decisions"])
+    a,b=st.columns(2)
+    a.download_button("Download self-contained HTML report",html,"financial-time-machine-report.html","text/html",width="stretch")
+    b.download_button("Download replay CSV",csv,"financial-time-machine-replay.csv","text/csv",width="stretch")
+    a,b=st.columns(2)
+    a.download_button("Download trade ledger CSV",build_csv_report(view["history"],view["ledger"],metadata,
+        current_date=sim.current_date,completed=sim.complete,kind="trades"),"financial-time-machine-trades.csv","text/csv",width="stretch")
+    b.download_button("Download decision history CSV",build_csv_report(view["history"],metadata=metadata,
+        current_date=sim.current_date,completed=sim.complete,kind="decisions",decisions=view["decisions"]),
+        "financial-time-machine-decisions.csv","text/csv",width="stretch")
+    metrics_panel(view["history"],primary,view["ledger"],confidence=confidence)
     if sim.complete:
         st.subheader("DID YOUR PORTFOLIO SURVIVE THE CRISIS?")
         score=survival_score(metrics.get("total_return"),metrics.get("max_drawdown"),metrics.get("sharpe"),metrics.get("excess_return"))
@@ -510,37 +693,19 @@ def report():
             st.write("Weighted score: 35% capital preservation + 35% drawdown resilience + 15% risk-adjusted performance + 15% benchmark-relative performance. Each component is bounded from 0 to 100.")
             st.code("preservation = 100 × clip(1 + total_return, 0, 1)\ndrawdown = 100 × clip(1 − max_drawdown / 0.60, 0, 1)\nrisk_adjusted = 100 × clip((Sharpe + 1) / 3, 0, 1)\nrelative = 100 × clip(0.5 + excess_return / 0.40, 0, 1)",language=None)
             st.write("Missing components receive neutral 50%; weights are not redistributed. Categories: excellent ≥85, strong ≥70, moderate ≥50, severe damage ≥25, collapse below 25. Returns are decimal fractions; drawdown is a positive loss.")
-    final=view["history"].equity.iloc[-1]
-    if primary is not None:
-        st.write(f"Your portfolio finished at **USD {final:,.2f}**, compared with **USD {primary.iloc[-1]:,.2f}** for the benchmark" + ("." if sim.complete else " over the matching partial window."))
-    st.plotly_chart(charts.equity_chart({"Your portfolio":view["history"].equity,**bench}),width="stretch")
+    debrief=report_debrief(view["history"],benchmark=primary,current_date=sim.current_date)
+    debrief["benchmark_name"]=benchmark_name
+    render_debrief(debrief)
+    show_chart(charts.equity_chart({"Your portfolio":view["history"].equity,**bench}),width="stretch")
     from core.reporting import formatted_metric_table
     st.subheader("Performance detail")
     st.dataframe(formatted_metric_table(metrics),hide_index=True,width="stretch",height=440,
         column_config={"Metric":st.column_config.TextColumn(width="large"),"Value":st.column_config.TextColumn(width="medium")})
     st.caption("N/A indicates insufficient observations or an undefined ratio. Short-period annualizations are unstable. VaR and Expected Shortfall are empirical one-session loss estimates, not forecasts.")
-    events=visible_events(sim.current_date,start=view["history"].index.min())
-    metadata={**view["config"],**meta,"data_source":"synthetic" if meta["synthetic"] else "historical adjusted prices",
-        "scenario":SCENARIOS[meta["scenario_key"]].name,"fingerprint":view["config"].get("data_fingerprint",""),
-        "cash_interest_annual":0,"risk_free_annual":0}
-    html=build_html_report(view["history"],view["ledger"],metadata,metrics,events=events,
-        contributions=view["contributions"],benchmark=primary,current_date=sim.current_date,completed=sim.complete,
-        decisions=view["decisions"],confidence=confidence)
-    csv=build_csv_report(view["history"],view["ledger"],metadata,current_date=sim.current_date,completed=sim.complete,
-        benchmark=primary,decisions=view["decisions"])
-    a,b=st.columns(2)
-    a.download_button("Download self-contained HTML report",html,"financial-time-machine-report.html","text/html",width="stretch")
-    b.download_button("Download replay CSV",csv,"financial-time-machine-replay.csv","text/csv",width="stretch")
-    a,b=st.columns(2)
-    a.download_button("Download trade ledger CSV",build_csv_report(view["history"],view["ledger"],metadata,
-        current_date=sim.current_date,completed=sim.complete,kind="trades"),"financial-time-machine-trades.csv","text/csv",width="stretch")
-    b.download_button("Download decision history CSV",build_csv_report(view["history"],metadata=metadata,
-        current_date=sim.current_date,completed=sim.complete,kind="decisions",decisions=view["decisions"]),
-        "financial-time-machine-decisions.csv","text/csv",width="stretch")
     with st.expander("Investment decisions and execution ledger"):
         st.dataframe(view["decisions"],width="stretch",hide_index=True)
         st.dataframe(view["ledger"],width="stretch",hide_index=True)
-    st.plotly_chart(charts.trading_timeline(view["ledger"],current_date=sim.current_date),width="stretch")
+    show_chart(charts.trading_timeline(view["ledger"],current_date=sim.current_date),width="stretch")
     event_feed(events)
 
 
@@ -553,6 +718,14 @@ with st.sidebar:
         st.caption("REPLAY CLOCK")
         st.markdown(f"**{sim.current_date:%d %b %Y}**")
         st.caption("COMPLETE" if sim.complete else "IN PROGRESS · REVEALED DATA ONLY")
+        meta=st.session_state.survival_meta
+        scenario=SCENARIOS[meta["scenario_key"]]
+        first=sim.history.index[0]
+        span=(pd.Timestamp(scenario.end)-first).days
+        progress=min(1.,max(0.,(sim.current_date-first).days/max(1,span)))
+        st.progress(1. if sim.complete else progress,text=f"Session {len(sim.history):,}")
+        if st.session_state.benchmarks:
+            st.selectbox("Comparison benchmark",list(st.session_state.benchmarks),key="survival_benchmark_choice")
         st.button("Reset mission",on_click=clear_session,width="stretch")
     else:
         st.caption("ENGINE STATUS")
@@ -562,6 +735,9 @@ with st.sidebar:
         st.write("Adjusted prices approximate reinvested returns in synthetic units. They are retrospectively revised, not executable quotes or a fully point-in-time database. No separate dividends, splits, leverage, taxes, or cash interest.")
         st.write("Metrics: 252 sessions/year; actual elapsed days for CAGR; sample standard deviation; effective annual RF and MAR converted daily; default both 0%. VaR: linear empirical quantile of losses, 95%, at least 20 observations. Turnover includes initial purchases.")
         st.write("Today's surviving ETF universe introduces survivorship bias. Named scenarios reveal broad context. Historical event timestamps are conservatively disclosed at the next exchange session when uncertain.")
+    with st.expander("Display preferences"):
+        st.checkbox("Animate large portfolio moves",value=True,key="motion_enabled")
+        st.caption("Brief emphasis for daily moves of at least 3%. System reduced-motion preferences are respected; sound is never played.")
     st.caption("Educational research. Not investment advice.")
 
 {"Mission Control":mission,"Financial Time Machine":replay,"Strategy Laboratory":laboratory,

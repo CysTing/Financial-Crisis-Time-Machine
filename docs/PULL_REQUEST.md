@@ -6,4 +6,6 @@ Adds a five-page Streamlit application for historical crisis replay and retrospe
 
 Includes three scenarios, seven ETFs plus cash, six systematic strategies, matched SPY/60-40 benchmarks, sourced disclosure-aware events, risk analytics, an educational survival score, CSV/HTML reports, and an explicit offline synthetic demonstration. Genuine downloads are validated against exchange sessions and cached separately; no market observations are bundled.
 
+Adds a dated decision journal, factual portfolio-move pulses with optional reduced-motion-aware emphasis, and a computed crisis debrief. Mission configuration changes invalidate old preflight results; allocation drafts persist across navigation; benchmark selection and chart filtering do not alter the replay clock or holdings.
+
 Validation: see docs/ACCEPTANCE.md for the exact local test/browser/provider results. GitHub Actions is configured; remote CI and live deployment require publication and have not been claimed.
